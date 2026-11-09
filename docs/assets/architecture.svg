@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="520" viewBox="0 0 1000 520" role="img" aria-labelledby="title desc">
+  <title id="title">cs2-external 架构总览</title>
+  <desc id="desc">Linux 外部只读辅助的分层架构：/proc 数据源、core 核心层、game 游戏层、render 叠加层、features 输入层、ui 控制面板。</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#111c2e"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f3a5f"/>
+      <stop offset="1" stop-color="#16283f"/>
+    </linearGradient>
+    <linearGradient id="game" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d4a3c"/>
+      <stop offset="1" stop-color="#133027"/>
+    </linearGradient>
+    <linearGradient id="render" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3d2a55"/>
+      <stop offset="1" stop-color="#281c38"/>
+    </linearGradient>
+    <linearGradient id="input" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5a3a1c"/>
+      <stop offset="1" stop-color="#3a2512"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6f8bab"/>
+    </marker>
+    <style>
+      .title { font: 600 22px "DejaVu Sans", "Noto Sans CJK SC", sans-serif; fill: #e8f1ff; }
+      .sub   { font: 400 13px "DejaVu Sans", "Noto Sans CJK SC", sans-serif; fill: #8fa6c0; }
+      .box   { stroke: #2f4c6e; stroke-width: 1; rx: 10; }
+      .h     { font: 600 14px "DejaVu Sans", "Noto Sans CJK SC", sans-serif; fill: #dce9f8; }
+      .t     { font: 400 12px "DejaVu Sans", "Noto Sans CJK SC", sans-serif; fill: #a9bed6; }
+      .tag   { font: 500 11px "DejaVu Sans", "Noto Sans CJK SC", sans-serif; fill: #0b1220; }
+      .flow  { stroke: #6f8bab; stroke-width: 1.4; fill: none; marker-end: url(#arrow); }
+      .dash  { stroke: #47607c; stroke-width: 1.2; fill: none; stroke-dasharray: 5 4; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1000" height="520" fill="url(#bg)"/>
+
+  <!-- 标题 -->
+  <text class="title" x="32" y="46">cs2-external · 分层架构</text>
+  <text class="sub" x="32" y="70">只读 /proc 数据源 → 快照 → 叠加层与输入；无注入、无写内存</text>
+
+  <!-- 数据源 -->
+  <rect class="box" x="32" y="100" width="230" height="130" fill="#121c2b"/>
+  <text class="h" x="48" y="126">内核数据源</text>
+  <text class="t" x="48" y="150">/proc/&lt;pid&gt;/comm · maps · mem</text>
+  <text class="t" x="48" y="170">pread64 只读读取</text>
+  <text class="t" x="48" y="190">libclient.so 基址与段范围</text>
+  <text class="t" x="48" y="210">Yama 权限边界</text>
+
+  <!-- core -->
+  <rect class="box" x="300" y="100" width="230" height="210" fill="url(#core)"/>
+  <text class="h" x="316" y="126">core</text>
+  <text class="t" x="316" y="150">Memory · /proc 读写封装</text>
+  <text class="t" x="316" y="170">Math · Vec2 / Vec3 / Mat4 / w2s</text>
+  <text class="t" x="316" y="190">Offsets · 偏移结构体</text>
+  <text class="t" x="316" y="210">OffsetsImporter · dumper 导入</text>
+  <text class="t" x="316" y="230">Patterns · 特征码集中表</text>
+  <text class="t" x="316" y="250">Config · JSON 解析与持久化</text>
+  <text class="t" x="316" y="276" fill="#7fb3e8">AppState · 原子 shared_ptr&lt;Config&gt;</text>
+
+  <!-- game -->
+  <rect class="box" x="568" y="100" width="230" height="130" fill="url(#game)"/>
+  <text class="h" x="584" y="126">game</text>
+  <text class="t" x="584" y="150">Game · 实体分块遍历</text>
+  <text class="t" x="584" y="170">骨骼 / 视图矩阵 / 投影</text>
+  <text class="t" x="584" y="190">Snapshot · 无锁快照发布</text>
+  <text class="t" x="584" y="210">CS2 → 玩家数组</text>
+
+  <!-- render -->
+  <rect class="box" x="568" y="270" width="230" height="110" fill="url(#render)"/>
+  <text class="h" x="584" y="296">render</text>
+  <text class="t" x="584" y="320">Overlay · Qt6 透明窗口</text>
+  <text class="t" x="584" y="340">XShape 输入穿透</text>
+  <text class="t" x="584" y="360">XRaiseWindow 置顶 · 30ms</text>
+
+  <!-- input -->
+  <rect class="box" x="300" y="350" width="230" height="110" fill="url(#input)"/>
+  <text class="h" x="316" y="376">features</text>
+  <text class="t" x="316" y="400">Features · 自瞄 / 扳机线程</text>
+  <text class="t" x="316" y="420">XTest 合成鼠标位移与按键</text>
+  <text class="t" x="316" y="440">XQueryPointer 按键状态</text>
+
+  <!-- ui -->
+  <rect class="box" x="32" y="270" width="230" height="190" fill="#16202f"/>
+  <text class="h" x="48" y="296">ui</text>
+  <text class="t" x="48" y="320">Menu · Qt6 控制面板</text>
+  <text class="t" x="48" y="340">透视 / 自瞄 / 扳机开关</text>
+  <text class="t" x="48" y="360">参数即时生效</text>
+  <text class="t" x="48" y="380">写回 config.json</text>
+  <text class="t" x="48" y="406" fill="#7fb3e8">Main.cpp · 装配</text>
+  <text class="t" x="48" y="430">Game / Menu / Overlay / Features</text>
+
+  <!-- 连线 -->
+  <path class="flow" d="M262 165 L300 165"/>
+  <path class="flow" d="M530 165 L568 165"/>
+  <path class="flow" d="M530 320 L568 320"/>
+  <path class="flow" d="M683 270 L683 230"/>
+  <path class="flow" d="M262 355 L300 355"/>
+  <path class="flow" d="M415 350 L415 310"/>
+  <path class="dash" d="M147 270 L147 230"/>
+  <path class="dash" d="M762 165 L800 165"/>
+  <path class="dash" d="M800 165 L800 420 L530 420"/>
+
+  <!-- 渲染输出 -->
+  <rect class="box" x="800" y="130" width="168" height="70" fill="#1a2433"/>
+  <text class="h" x="816" y="156">游戏画面</text>
+  <text class="t" x="816" y="180">合成器叠加输出</text>
+
+  <!-- 说明 -->
+  <text class="t" x="32" y="500" fill="#6f8bab">实线：数据流　虚线：配置与输出</text>
+</svg>
