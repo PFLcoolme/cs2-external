@@ -1,0 +1,62 @@
+{
+  "process": "cs2",
+  "module": "libclient.so",
+  "offsetsFile": "config/offsets.json",
+  "offsets": {
+    "sigEntityList": "",
+    "sigLocalPlayerPawn": "",
+    "sigViewMatrix": "",
+    "dwEntityList": 0,
+    "dwLocalPlayerPawn": 0,
+    "dwViewMatrix": 0,
+    "entityListChunkBase": 16,
+    "entityChunkPtrStride": 8,
+    "entityChunkShift": 9,
+    "entityChunkMask": 511,
+    "entityChunkStride": 112,
+    "m_iHealth": 0,
+    "m_iTeamNum": 0,
+    "m_lifeState": 0,
+    "m_pGameSceneNode": 0,
+    "m_vecAbsOrigin": 0,
+    "m_modelState": 448,
+    "m_boneArray": 0,
+    "m_iIDEntIndex": 0,
+    "m_bSpotted": 0,
+    "entityHandleMask": 32767,
+    "boneStride": 32,
+    "bonePosX": 0,
+    "bonePosY": 4,
+    "bonePosZ": 8,
+    "boneHead": 6,
+    "boneNeck": 5,
+    "boneChest": 4,
+    "bonePelvis": 0
+  },
+  "aim": {
+    "enabled": true,
+    "key": 0,
+    "fovPixels": 220.0,
+    "smooth": 5,
+    "sensitivityFactor": 0.45,
+    "teamCheck": true,
+    "maxDistance": 0.0
+  },
+  "trigger": {
+    "enabled": false,
+    "key": 0,
+    "delayMs": 30,
+    "cooldownMs": 120,
+    "teamCheck": true
+  },
+  "esp": {
+    "enabled": true,
+    "box": true,
+    "health": true,
+    "distance": true,
+    "skeleton": false,
+    "teamCheck": false,
+    "visibilityCheck": false,
+    "maxDistance": 0.0
+  }
+}
