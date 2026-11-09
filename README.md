@@ -10,6 +10,7 @@
 [![C++](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)](https://isocpp.org/)
 [![Qt](https://img.shields.io/badge/Qt-6%20Widgets-41CD52?logo=qt&logoColor=white)](https://www.qt.io/)
 [![CMake](https://img.shields.io/badge/CMake-3.21%2B-064F8C?logo=cmake&logoColor=white)](https://cmake.org/)
+[![Release](https://img.shields.io/github/v/release/PFLcoolme/cs2-external?color=2ea44f&label=release)](https://github.com/PFLcoolme/cs2-external/releases/latest)
 [![X11](https://img.shields.io/badge/X11-XTest%20%7C%20XShape-6f42c1)](https://www.x.org/)
 [![Stars](https://img.shields.io/github/stars/PFLcoolme/cs2-external?style=flat&color=f5c542)](https://github.com/PFLcoolme/cs2-external/stargazers)
 [![Last Commit](https://img.shields.io/github/last-commit/PFLcoolme/cs2-external?color=blue)](https://github.com/PFLcoolme/cs2-external/commits/main)
@@ -167,6 +168,17 @@ sudo apt install build-essential cmake ninja-build \
 ---
 
 ## 6. 快速开始
+
+### 6.0 直接使用发布包
+
+在 [Releases](https://github.com/PFLcoolme/cs2-external/releases/latest) 下载 `cs2_lite` 与 `default.json`，放到同一目录后重命名配置为 `config.json` 即可运行：
+
+```bash
+chmod +x cs2_lite
+./cs2_lite
+```
+
+> 发布包依赖系统 Qt6 与 X11 运行库，发行版差异较大时建议自行构建。
 
 ### 6.1 构建
 
