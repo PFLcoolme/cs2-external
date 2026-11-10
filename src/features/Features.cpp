@@ -98,6 +98,7 @@ void Features::run() {
         const std::uintptr_t window = state_.gameWindow.load();
         if (!config || window == 0 || !game_.attached() ||
             !gameActive(display, window, game_.pid())) {
+            state_.aimGate.store(0);
             if (++debugTick_ % 1000 == 0) {
                 trace("[skip] cfg=%d window=%lu attached=%d active=%d pid=%d\n",
                       config ? 1 : 0, static_cast<unsigned long>(window),
@@ -113,6 +114,7 @@ void Features::run() {
 
         const Snapshot snapshot = game_.snapshot();
         if (!snapshot.valid) {
+            state_.aimGate.store(0);
             if (++debugTick_ % 1000 == 0) {
                 trace("[skip] snapshot invalid\n");
             }
@@ -131,6 +133,7 @@ void Features::run() {
             config->aim.scopeKey <= 0 || buttonDown(display, config->aim.scopeKey);
         const bool fireHeld =
             config->aim.fireKey <= 0 || buttonDown(display, config->aim.fireKey);
+        state_.aimGate.store((scopeHeld && fireHeld) ? 1 : 0);
         if (++debugTick_ % 100 == 0) {
             trace("[gate] window=%lu players=%zu scope=%d fire=%d fov=%.0f\n",
                   static_cast<unsigned long>(window), snapshot.players.size(),
@@ -274,6 +277,8 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
 
     const PlayerInfo* best = nullptr;
     float bestDistance = config.aim.fovPixels;
+    float bestHealth = 1e9f;
+    float bestWorld = 1e9f;
     float nearest = 1e9f;  // 全屏最近目标的屏幕距离，用于诊断 FOV 是否过小
 
     for (const PlayerInfo& player : snapshot.players) {
@@ -285,10 +290,18 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
         const float dy = player.headScreen.y - centerY;
         const float distance = std::sqrt(dx * dx + dy * dy);
         if (distance < nearest) nearest = distance;
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            best = &player;
-        }
+        if (distance >= bestDistance) continue;
+
+        // 目标策略：0 = 屏幕最近，1 = 血量最低，2 = 世界最近
+        bool better = best == nullptr;
+        if (!better && config.aim.strategy == 1) better = player.health < bestHealth;
+        if (!better && config.aim.strategy == 2) better = player.distance < bestWorld;
+        if (!better) continue;
+
+        bestDistance = distance;
+        bestHealth = static_cast<float>(player.health);
+        bestWorld = player.distance;
+        best = &player;
     }
     if (!best) {
         if (++debugAimTick_ % 200 == 0) {

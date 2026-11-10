@@ -18,6 +18,8 @@ struct AimbotConfig {
     float sensitivityFactor{0.45f};
     bool teamCheck{true};
     float maxDistance{0.f};  // 0 = 不限
+    // 目标选择：0 = 屏幕最近，1 = 血量最低，2 = 世界最近
+    int strategy{0};
 };
 
 struct TriggerConfig {
@@ -32,8 +34,11 @@ struct EspConfig {
     bool enabled{true};
     bool box{true};
     bool health{true};
+    bool healthText{true};  // 血量数值文字
     bool distance{true};
     bool skeleton{false};
+    bool radar{false};  // 2D 雷达（固定北向，底部居中）
+    float radarRange{40.f};  // 雷达半径对应的世界距离（米）
     bool teamCheck{false};
     bool visibilityCheck{true};
     float maxDistance{0.f};
@@ -58,6 +63,8 @@ struct Config {
 struct AppState {
     std::atomic<std::shared_ptr<Config>> config{nullptr};
     std::atomic<std::uintptr_t> gameWindow{0};
+    // 1 = 开镜与开火同时按住（自瞄门控状态），叠加层据此给 FOV 圈着色。
+    std::atomic<int> aimGate{0};
 };
 
 }  // namespace wv

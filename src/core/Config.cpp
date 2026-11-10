@@ -129,6 +129,7 @@ Config Config::load(const std::string& path) {
         cfg.aim.sensitivityFactor =
             static_cast<float>(o.value("sensitivityFactor").toDouble(cfg.aim.sensitivityFactor));
         cfg.aim.teamCheck = o.value("teamCheck").toBool(cfg.aim.teamCheck);
+        cfg.aim.strategy = asInt(o, "strategy", cfg.aim.strategy);
         cfg.aim.maxDistance =
             static_cast<float>(o.value("maxDistance").toDouble(cfg.aim.maxDistance));
     }
@@ -147,8 +148,12 @@ Config Config::load(const std::string& path) {
         cfg.esp.enabled = o.value("enabled").toBool(cfg.esp.enabled);
         cfg.esp.box = o.value("box").toBool(cfg.esp.box);
         cfg.esp.health = o.value("health").toBool(cfg.esp.health);
+        cfg.esp.healthText = o.value("healthText").toBool(cfg.esp.healthText);
         cfg.esp.distance = o.value("distance").toBool(cfg.esp.distance);
         cfg.esp.skeleton = o.value("skeleton").toBool(cfg.esp.skeleton);
+        cfg.esp.radar = o.value("radar").toBool(cfg.esp.radar);
+        cfg.esp.radarRange =
+            static_cast<float>(o.value("radarRange").toDouble(cfg.esp.radarRange));
         cfg.esp.teamCheck = o.value("teamCheck").toBool(cfg.esp.teamCheck);
         cfg.esp.visibilityCheck = o.value("visibilityCheck").toBool(cfg.esp.visibilityCheck);
         cfg.esp.maxDistance =
@@ -173,6 +178,7 @@ void Config::save(const std::string& path) const {
     aimObj["smooth"] = aim.smooth;
     aimObj["sensitivityFactor"] = static_cast<double>(aim.sensitivityFactor);
     aimObj["teamCheck"] = aim.teamCheck;
+    aimObj["strategy"] = aim.strategy;
     aimObj["maxDistance"] = static_cast<double>(aim.maxDistance);
     root["aim"] = aimObj;
 
@@ -188,8 +194,11 @@ void Config::save(const std::string& path) const {
     espObj["enabled"] = esp.enabled;
     espObj["box"] = esp.box;
     espObj["health"] = esp.health;
+    espObj["healthText"] = esp.healthText;
     espObj["distance"] = esp.distance;
     espObj["skeleton"] = esp.skeleton;
+    espObj["radar"] = esp.radar;
+    espObj["radarRange"] = static_cast<double>(esp.radarRange);
     espObj["teamCheck"] = esp.teamCheck;
     espObj["visibilityCheck"] = esp.visibilityCheck;
     espObj["maxDistance"] = static_cast<double>(esp.maxDistance);

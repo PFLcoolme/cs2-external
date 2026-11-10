@@ -25,6 +25,7 @@
 #undef Expose
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -232,7 +233,8 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    QFont font("DejaVu Sans");
+    // 数字统一走等宽字体：血量和距离是读数，不是文案，等宽才能不跳动。
+    QFont font("DejaVu Sans Mono");
     font.setPixelSize(11);
     font.setBold(true);
     painter.setFont(font);
@@ -248,8 +250,12 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         if (maxDistance > 0.f && player.distance > maxDistance) continue;
 
         QColor color = player.team == 2 ? QColor(230, 162, 60) : QColor(74, 144, 226);
-        // 可见性双色：被遮挡目标降低不透明度
-        if (config->esp.visibilityCheck && !player.visible) color.setAlpha(100);
+        // 可见性双色：可见 = 实线全亮，被遮挡 = 虚线 + 低不透明度。
+        boxPen.setStyle(Qt::SolidLine);
+        if (config->esp.visibilityCheck && !player.visible) {
+            color.setAlpha(110);
+            boxPen.setStyle(Qt::DashLine);
+        }
         boxPen.setColor(color);
         painter.setPen(boxPen);
 
@@ -275,6 +281,13 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
             const float ratio = std::clamp(player.health / 100.f, 0.f, 1.f);
             const QRectF foreground(barLeft, top + height * (1.f - ratio), barWidth, height * ratio);
             painter.fillRect(foreground, QColor::fromHsvF((0.33f * ratio), 0.85f, 0.95f));
+
+            if (config->esp.healthText) {
+                painter.setPen(QColor(235, 235, 235, 220));
+                painter.drawText(QPointF(barLeft - 21.f, top + 9.f),
+                                 QString::number(player.health));
+                painter.setPen(boxPen);
+            }
         }
 
         if (config->esp.distance) {
@@ -292,9 +305,57 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         }
     }
 
+    // ---- 2D 雷达：固定北向，底部居中。世界 +X 向右、+Y 向上，
+    // 屏幕 y 轴向下因此取负号；半径按 radarRange 米线性映射。 ----
+    if (config->esp.radar) {
+        const float radius = 92.f;
+        const QPointF center(static_cast<float>(width()) * 0.5f,
+                             static_cast<float>(height()) - radius - 56.f);
+        painter.setPen(QPen(QColor(230, 162, 60, 70), 1.0));
+        painter.setBrush(QColor(12, 14, 18, 110));
+        painter.drawEllipse(center, radius, radius);
+        painter.setBrush(Qt::NoBrush);
+
+        painter.setPen(QPen(QColor(230, 162, 60, 45), 1.0));
+        painter.drawLine(QPointF(center.x() - radius, center.y()),
+                         QPointF(center.x() + radius, center.y()));
+        painter.drawLine(QPointF(center.x(), center.y() - radius),
+                         QPointF(center.x(), center.y() + radius));
+
+        const float range = std::max(5.f, config->esp.radarRange);
+        for (const PlayerInfo& player : snapshot.players) {
+            if (maxDistance > 0.f && player.distance > maxDistance) continue;
+            if (player.distance > range) continue;
+
+            float dx = player.origin.x - snapshot.localOrigin.x;
+            float dy = player.origin.y - snapshot.localOrigin.y;
+            if (dx == 0.f && dy == 0.f) continue;
+            const float length = std::sqrt(dx * dx + dy * dy);
+            dx /= length;
+            dy /= length;
+
+            const float scaled = radius * (player.distance / range);
+            const QPointF dot(center.x() + dx * scaled, center.y() - dy * scaled);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(player.team == 2 ? QColor(230, 162, 60) : QColor(74, 144, 226));
+            painter.drawEllipse(dot, 3.0, 3.0);
+        }
+
+        // 自身位置
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(235, 235, 235));
+        painter.drawEllipse(center, 2.5, 2.5);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QColor(160, 166, 175));
+        painter.drawText(QPointF(center.x() - radius, center.y() + radius + 14.f),
+                         QString::number(static_cast<int>(range)) + "m");
+    }
+
     if (config->aim.enabled) {
-        QPen fovPen(QColor(255, 255, 255, 60));
-        fovPen.setWidthF(1.f);
+        // 门控可视化：开镜 + 开火同时按住时圆环转绿，松开回到白色虚线。
+        const bool gateHeld = state_.aimGate.load() != 0;
+        QPen fovPen(gateHeld ? QColor(96, 220, 130, 190) : QColor(255, 255, 255, 60));
+        fovPen.setWidthF(gateHeld ? 1.6 : 1.0);
         fovPen.setStyle(Qt::DashLine);
         painter.setPen(fovPen);
         painter.drawEllipse(QPointF(width() * 0.5, height() * 0.5),
