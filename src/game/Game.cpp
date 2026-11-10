@@ -72,10 +72,11 @@ void Game::resolveOffsets() {
     if (offsets_.m_iHealth == 0) missing += "m_iHealth ";
     if (offsets_.m_pGameSceneNode == 0) missing += "m_pGameSceneNode ";
     if (offsets_.m_vecAbsOrigin == 0) missing += "m_vecAbsOrigin ";
-    // m_modelState / m_boneArray 仅骨骼连线使用，缺失不影响方框与血量绘制
+    // m_modelState 仅骨骼连线使用，缺失不影响方框与血量绘制；
+    // m_boneArray 允许为 0（本版本骨骼数组就在 m_modelState 处二级偏移 0）。
     if (!missing.empty()) {
         setStatus("偏移缺失: " + missing);
-    } else if (offsets_.m_modelState == 0 || offsets_.m_boneArray == 0) {
+    } else if (offsets_.m_modelState == 0) {
         setStatus("已连接 pid=" + std::to_string(memory_.pid()) + "（骨骼偏移缺失，连线不可用）");
     } else {
         setStatus("已连接 pid=" + std::to_string(memory_.pid()));

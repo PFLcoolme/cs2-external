@@ -211,7 +211,8 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
     : QWidget(nullptr), state_(state), game_(game), path_(std::move(configPath)) {
     setWindowTitle("CS2 辅助 · 控制面板");
     // 无边框 + 透明底：整块面板由 paintEvent 画成圆角玻璃，WM 不再画标题栏。
-    setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
+    // 无边框后没有标题栏可点回前台，必须自己置顶，否则被 IDE / 浏览器整块盖住。
+    setWindowFlags(Qt::FramelessWindowHint | Qt::Window | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setFixedWidth(440);
     setStyleSheet(kStyle);
@@ -587,6 +588,14 @@ void Menu::apply() {
 void Menu::persist(const Config& config, const QString& message) {
     const QString target = QString::fromStdString(path_);
     const QString backup = backupPath(path_);
+
+    // 三个全局偏移是全功能的根：任一为空说明这份配置读不到偏移，
+    // 落盘会把整份 config.json 的 offsets 归零，下次启动直接全失效。
+    if (config.offsets.dwEntityList == 0 || config.offsets.dwLocalPlayerPawn == 0 ||
+        config.offsets.dwViewMatrix == 0) {
+        if (status_) status_->setText("偏移缺失，未保存 · 先跑 tools/cs2_linux_offsets.py");
+        return;
+    }
 
     // 覆盖前把现有配置留作「上一次」：QFile::copy 不覆盖已有文件，先删旧备份。
     if (QFile::exists(target)) {

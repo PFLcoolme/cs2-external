@@ -514,7 +514,12 @@ def main():
     m_lifeState = need("C_BaseEntity", "m_lifeState")
     m_pGameSceneNode = need("C_BaseEntity", "m_pGameSceneNode")
     m_vecAbsOrigin = need("CGameSceneNode", "m_vecAbsOrigin")
+    # CSkeletonInstance.m_modelState 是 CModelState 结构体起点（本机 0x140），
+    # 而骨骼数组指针在 scene + 0x1C0（实测校验 16/16 通过），即结构体内 +0x80。
+    # 两者语义不同，直接写进 offsets.json 会让骨骼读错指针，故只打印不输出。
     m_modelState = need("CSkeletonInstance", "m_modelState")
+    print(f"[field] m_modelState = {m_modelState} ({m_modelState:#x}) "
+          f"struct base; bone array pointer = scene + 0x1c0 (measured, kept in config)")
     m_iIDEntIndex = need("C_CSPlayerPawn", "m_iIDEntIndex")
     m_entitySpottedState = need("C_CSPlayerPawn", "m_entitySpottedState")
     m_bSpotted_local = need("EntitySpottedState_t", "m_bSpotted")
@@ -663,7 +668,6 @@ def main():
         "m_lifeState": m_lifeState,
         "m_pGameSceneNode": m_pGameSceneNode,
         "m_vecAbsOrigin": m_vecAbsOrigin,
-        "m_modelState": m_modelState,
         "m_iIDEntIndex": m_iIDEntIndex,
         "m_bSpotted": m_bSpotted,
     }

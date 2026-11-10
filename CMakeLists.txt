@@ -39,3 +39,13 @@ add_custom_command(TARGET cs2_lite POST_BUILD
             ${CMAKE_CURRENT_SOURCE_DIR}/config/default.json
             $<TARGET_FILE_DIR:cs2_lite>/config.json
 )
+
+# 生成器产出的偏移文件跟随可执行文件，使 config.json 里 offsetsFile 的相对路径
+# （config/offsets.json）无论从仓库根目录还是 build/ 启动都能解析到。
+add_custom_command(TARGET cs2_lite POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            $<TARGET_FILE_DIR:cs2_lite>/config
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/config/offsets.json
+            $<TARGET_FILE_DIR:cs2_lite>/config/offsets.json
+)

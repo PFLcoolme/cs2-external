@@ -718,3 +718,48 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 
 - 生成器每跑一次都会用当前游戏版本覆盖 `offsets.json`，游戏更新后重跑即可，无需改代码。
 - 护甲是否显示仍由 `esp.armor` 控制，默认关闭。
+
+---
+
+# 阶段二十：全功能失效的根因与修复
+
+## 1. 目标
+
+用户报告「所有功能都无法使用了」，且经追问确认不是某一层失效，而是透视、方框、自瞄、扳机、骨骼、面板全部无反应。目标是定位全部根因而非逐条猜修。
+
+## 2. 排查与实现
+
+四条独立缺陷，按影响面排序：
+
+- 根因一：零偏移配置传播
+  - `build/config.json` 为 1473 字节，`offsets` 全 0；`Game` 构造时按值拷贝 `Offsets`，读到零偏移 → 所有内存读取落空，画面无任何玩家。
+  - `importOffsetsFile()` 在文件打不开时提前 `return`、不清空 offset，所以缺失 `config/offsets.json` 不会自愈，只会保持零值。
+  - 修复：`Menu::persist()` 落盘前拦截 `dwEntityList / dwLocalPlayerPawn / dwViewMatrix` 任一为 0，直接 `return` 并在状态栏提示「偏移缺失，未保存」。
+  - 修复：`CMakeLists.txt` 增加 `POST_BUILD`，把 `config/offsets.json` 复制到 `$<TARGET_FILE_DIR>/config/`，使相对路径 `offsetsFile` 无论从仓库根还是 `build/` 启动都能解析。
+- 根因二：`m_modelState` 语义错位
+  - schema 的 `CSkeletonInstance.m_modelState = 320` 是 `CModelState` 结构体起点，骨骼数组指针在 `scene + 0x1c0`（结构体内 +0x80，实测 448）。
+  - 修复：生成器不再把该字段写入结果，只打印注释；`config/offsets.json` 与 `build/config.json` 取 448。
+- 根因三：面板无置顶
+  - `Qt::FramelessWindowHint | Qt::Window` 后没有标题栏，也没有置顶标志，被 IDE / 浏览器整块覆盖且无法点回前台。
+  - 修复：窗口标志补 `Qt::WindowStaysOnTopHint`。
+- 根因四：扳机被恒 0 字段卡死
+  - 选靶函数用 `m_bSpotted` 判可见，本版本该字段恒 0，`if (!target->visible) return;` 导致扳机永不出手。
+  - 修复：删除该门控，保留 `config.trigger.teamCheck` 队伍检查。
+
+`Game::resolveOffsets()`：`m_modelState` 缺失从「偏移缺失」列表移除，只走降级状态文案；`m_boneArray` 允许为 0。
+
+## 3. 验证
+
+- `cmake --build build -j8` → `[3/3] Linking CXX executable cs2_lite`，0 warning / 0 error。
+- 面板置顶（Xvfb）：`xprop _NET_WM_STATE` 输出 `_NET_WM_STATE_ABOVE, _NET_WM_STATE_STAYS_ON_TOP`，`Map State: IsViewable`，截图渲染完整（含「恢 复 上 一 次」/「应 用 并 保 存」与第 5 行「护甲数值 / 伤害数值」）。
+- 保存不丢偏移：以真实值配置点击「应用并保存」，`offsets` 保持 `dwEntityList=79275856`、`dwLocalPlayerPawn=76829880`、`dwViewMatrix=76860160`。
+- 自愈：把 `config.json` 的 `dw*` 与 `m_iHealth` 清零，同时放置 `config/offsets.json` → 启动后点击保存，`offsets` 恢复为真实值。
+- 拦截：清零配置且**无** `offsets.json` 时点击保存，文件 `stat` 前后完全一致（`before=[1794321665 1748] after=[1794321665 1748]`），未生成 `.bak`。
+- 偏移正确性（活体只读探针，pid 679372）：`m_modelState=448` 读到 10 个健康玩家，骨骼校验 10/10，`bone6.z - origin.z ≈ 60.1–60.3`；同一进程用 320 读不到骨骼。
+- 最终状态截图 `/tmp/status_fixed.png`：状态行「已连接 pid=679372」，无「骨骼偏移缺失」；底部「偏移来源 已从 config/offsets.json 导入 12 项偏移 · 偏移改动需重启」。
+
+## 4. 备注
+
+- `Game::offsets_` 是构造时的值拷贝，配置热重载只更新 `AppState::config`，不刷新 `Game`。偏移变更必须重启 `cs2_lite`。
+- 本轮未实机验证方框 / 自瞄 / 扳机的游戏内画面，Xvfb 内无法让游戏窗口出现在该 display；验证收敛到偏移可读性与渲染路径。
+- `m_bSpotted` 在本版本恒 0，已记入 README，后续不得再作为门控条件。

@@ -350,8 +350,6 @@ void Features::triggerStep(void* displayPtr, const Config& config, const Snapsho
     }
     if (!target) return;
     if (config.trigger.teamCheck && target->team == snapshot.localTeam) return;
-    // 只对可见目标开火：m_bSpotted 未配置时 visible 恒为 true，行为不变。
-    if (!target->visible) return;
 
     const auto now = std::chrono::steady_clock::now();
     if (now < nextTrigger_) return;

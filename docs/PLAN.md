@@ -250,3 +250,19 @@ sudo ./build/cs2_lite                        # 以 root 运行
 | 解析类 | `wanted` 集合补 `C_CSPlayerPawnBase`，否则基类绑定不会被遍历 |
 | 校验 | 本地 pawn 输出增加 `armor=`，与 `health/team` 同批打印；偏移同时写进 `config/offsets.json` |
 | 文档 | README 偏移表与 `esp` 配置表补 `m_ArmorValue` / `armor` / `damageNumbers` |
+
+---
+
+## 14. 阶段二十：全功能失效的根因与修复
+
+用户反馈「所有功能都无法使用了」，逐层排查后确认是四条独立缺陷叠加，逐条修复。
+
+| # | 缺陷 | 根因 | 方案 |
+|---|---|---|---|
+| 1 | 透视 / 方框 / 自瞄全部无输出 | `build/config.json` 的 `offsets` 被写成全 0（1473 字节），`Game` 拿到零偏移后所有读取落空 | `Menu::persist()` 在落盘前拦截三个全局偏移（`dwEntityList` / `dwLocalPlayerPawn` / `dwViewMatrix`）任一为 0 的情况，只提示不写盘；生成器产出的 `config/offsets.json` 通过 `POST_BUILD` 复制到可执行文件目录，`offsetsFile` 的相对路径在 `build/` 启动时也能解析，缺失的偏移可自愈 |
+| 2 | 骨骼连线失效 | 生成器把 schema 的 `CSkeletonInstance.m_modelState`（320，CModelState 结构体起点）当成骨骼数组指针偏移写出；实测骨骼数组在 `scene + 0x1c0`（= 448） | 生成器不再输出 `m_modelState`，仅打印说明；`config/offsets.json` 与 `build/config.json` 回填 448 |
+| 3 | 面板被整块遮住且点不回前台 | `Qt::FramelessWindowHint \| Qt::Window` 无标题栏，且无置顶 | 补 `Qt::WindowStaysOnTopHint` |
+| 4 | 扳机永不触发 | 选靶逻辑用 `m_bSpotted` 做可见性硬门控，而该字段在本版本恒 0 | 移除扳机的 `if (!target->visible) return;`，仅保留队伍检查 |
+
+`Game::resolveOffsets()` 的缺失判定同步放宽：`m_modelState == 0` 不再并入「偏移缺失」，只降级提示「骨骼偏移缺失，连线不可用」，方框与血量照常。
+
