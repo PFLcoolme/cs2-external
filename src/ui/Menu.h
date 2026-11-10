@@ -1,4 +1,5 @@
 #pragma once
+#include <QPoint>
 #include <QWidget>
 
 #include <string>
@@ -7,6 +8,7 @@
 #include "game/Game.h"
 
 class QCheckBox;
+class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QSpinBox;
@@ -19,6 +21,12 @@ class Menu : public QWidget {
 public:
     Menu(AppState& state, Game& game, std::string configPath);
 
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+
 private:
     void buildUi();
     void apply();
@@ -30,12 +38,16 @@ private:
     QCheckBox* espEnabled_{nullptr};
     QCheckBox* espBox_{nullptr};
     QCheckBox* espHealth_{nullptr};
+    QCheckBox* espHealthText_{nullptr};
     QCheckBox* espDistance_{nullptr};
     QCheckBox* espSkeleton_{nullptr};
+    QCheckBox* espRadar_{nullptr};
+    QSpinBox* espRadarRange_{nullptr};
     QCheckBox* espTeam_{nullptr};
     QCheckBox* espVisibility_{nullptr};
 
     QCheckBox* aimEnabled_{nullptr};
+    QComboBox* aimStrategy_{nullptr};
     QSpinBox* aimSmooth_{nullptr};
     QSpinBox* aimFov_{nullptr};
     QDoubleSpinBox* aimSensitivity_{nullptr};
@@ -46,6 +58,9 @@ private:
     QSpinBox* triggerCooldown_{nullptr};
 
     QLabel* status_{nullptr};
+
+    QPoint dragOffset_;
+    bool placed_{false};
 };
 
 }  // namespace wv

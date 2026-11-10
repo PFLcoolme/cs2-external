@@ -401,4 +401,148 @@ fireKey  = 1（鼠标左键，开火）；0 = 不要求开火
 2. 掩码变化行由主循环（1 ms）轮询得到，理论上可能漏掉短于 1 ms 的点按。
 3. `[skip] active=0` 仍会零星出现（切窗/全屏切换瞬间），属叠加层窗口探测的正常抖动，恢复后自动继续。
 
+# 阶段开发日志 — 阶段十：血量数值 / 2D 雷达 / 目标策略 / 可见性样式 / 门控可视化 + 面板重构
 
+## 1. 需求
+
+在现有快照字段（`health / team / visible / origin / headScreen / feetScreen / distance`）上做可视化与策略扩展，不新增任何内存偏移；同时统一叠加层与控制面板的视觉语言。
+
+## 2. 实现
+
+| 功能 | 文件 | 说明 |
+|---|---|---|
+| 血量数值 | `src/render/Overlay.cpp` | `esp.healthText` 开启时在血条左侧绘制读数，等宽字体避免跳动 |
+| 可见性双态样式 | 同上 | 可见 = 实线全亮；`visibilityCheck` 开启且被遮挡 = `Qt::DashLine` + alpha 110 |
+| 2D 雷达 | 同上 | 底部居中，半径 92 px；固定北向（世界 +X 向右、+Y 向上，屏幕 y 取负）；按 `radarRange` 米线性映射，中心为自身 |
+| FOV 圈门控着色 | 同上 + `src/features/Features.cpp` | `AppState::aimGate` 由 Features 写入，按住双键时圆环转绿并加粗 |
+| 目标策略 | `src/features/Features.cpp` | `aim.strategy`：0 屏幕最近、1 血量最低、2 世界最近 |
+| 面板重构 | `src/ui/Menu.cpp`、`Menu.h` | QSS 深炭底 + 琥珀强调、8 px 栅格、直角边框；新增血量数值 / 雷达 / 雷达范围 / 目标策略控件 |
+| 配置字段 | `src/core/Config.h`、`Config.cpp` | `esp.healthText`、`esp.radar`、`esp.radarRange`、`aim.strategy`、`AppState::aimGate` 的读写 |
+
+## 3. 验证
+
+- 构建：`cmake --build build -j8` → 8 个编译单元，0 warning / 0 error，链接成功。
+- 布局：`xvfb-run` + `import -window root` 截取实际渲染，确认分组标题、控件对齐、按钮样式与中文渲染正常（`/tmp/wv_ui.png`）。
+- 未验证：血量数值/雷达/FOV 变色的实际叠加效果需游戏内确认（当前无 CS2 进程）。
+
+## 4. 遗留风险
+
+1. 雷达为固定北向，不随视角旋转；如需随视角旋转，须从视图矩阵推导 yaw（当前未实现，避免猜测矩阵布局）。
+2. 雷达点按 `radarRange` 截断，超出范围的敌人不显示，可能出现“雷达空但场上有敌”的观感。
+3. 面板只暴露部分偏移项，其余仍以 `config/offsets.json` 为准。
+
+
+
+---
+
+# 阶段十一：控制面板极简化（黑白双色 / 半透明玻璃）
+
+## 1. 需求
+
+UI 极简、精简、现代化、透明；配色收敛为黑白双色。
+
+## 2. 实现
+
+| 变更 | 文件 | 说明 |
+|---|---|---|
+| 无边框玻璃底板 | `src/ui/Menu.cpp` | `FramelessWindowHint` + `WA_TranslucentBackground`；`paintEvent` 绘制 14 px 圆角、`rgba(13,14,16,216)` 底板、1 px 冷白描边、顶部白色高光线性渐隐 |
+| 面板拖动 | 同上 | 无 WM 装饰，自定义 `mousePressEvent/mouseMoveEvent` 按 `globalPosition` 差值移动窗口 |
+| 首次居中 | 同上 | `showEvent` 中按 `primaryScreen()->availableGeometry()` 居中一次 |
+| 关闭按钮 | 同上 | 右上角 `✕`（18×18，hover 白字 + 白色 20 alpha 底），点击关闭面板 |
+| 分组去盒化 | 同上 | 移除 `QGroupBox`，改用 10 px 字母间距的小节标签 + 1 px 分隔线 |
+| 控件精简 | 同上 | 复选框 13 px 圆角 4 px 指示器（勾选纯白填充）；数字框隐藏上下按钮、固定宽度（平滑 64 / 范围 88 / 灵敏度 88 / 扳机 84 / 雷达 78）；策略下拉跨列右对齐 |
+| 黑白双色 | 同上 | 移除全部琥珀色，勾选态与主按钮为白 `#F2F3F5` / `#EDEFF2`，其余为中性灰阶 |
+
+## 3. 验证
+
+- 构建：`cmake --build build -j8` → 0 warning / 0 error。
+- 渲染：`xvfb-run -a -s "-screen 0 1280x1000x24"` + `import -window root` 截图（`/tmp/ui_bw.png`）确认：圆角与描边绘制正常、标题/状态行、两列复选框、下拉与数字框对齐、分隔线、白色主按钮、无残留彩色。
+- 说明：Xvfb 无合成器，半透明区域在截图中呈纯黑；真实桌面有合成器时底板按 alpha 216 透出下层。
+
+## 4. 遗留风险
+
+1. 半透明依赖 X11 合成器；无合成器环境底板退化为接近纯黑，圆角仍由 alpha 生效。
+2. 关闭按钮直接退出进程（`QCoreApplication` 主窗口关闭），无托盘常驻入口。
+
+---
+
+# 阶段十二：面板改双列布局
+
+## 1. 需求
+
+面板不要单列竖向堆叠。
+
+## 2. 实现
+
+- `src/ui/Menu.cpp`：主体改为 `QHBoxLayout` 两列（`columns->setSpacing(16)`），中间 1 px 竖向分隔线（`QFrame#vrule`，白色 14 alpha）。
+  - 左列：透视（复选框两列 + 2D 雷达行）→ 分隔线 → 扳机。
+  - 右列：自瞄（启停 + 策略 + 平滑/范围/灵敏度）。
+  - 底部：偏移来源提示 + 「应用并保存」置于右列末端，`addStretch` 顶开。
+- 面板宽度 `322 → 520`；雷达半径 78→74 px、扳机数字框 84→78 px、自瞄数字框 88→80 px 以适配半宽列。
+
+## 3. 验证
+
+- `cmake --build build -j8` → 0 warning / 0 error。
+- `xvfb-run -a -s "-screen 0 1280x900x24"` + `import -window root` 截图（`/tmp/ui_2col.png`）确认两列并列、竖分隔线可见、无文字截断、底部对齐。
+
+## 4. 遗留风险
+
+- 面板宽 520 px，1366×768 等窄屏下仍可容纳，但若加宽屏外挂布局需再核对。
+
+---
+
+# 阶段十三：面板背景完全透明（仅线条分隔）
+
+## 1. 需求
+
+背景完全透明，仅靠线条划分区域。
+
+## 2. 实现（`src/ui/Menu.cpp`）
+
+- `paintEvent`：删除底板填充与顶部高光，只保留 1 px 圆角线框（白 56 alpha）作为可拖动边界。
+- QSS 去底色：
+  - `QSpinBox/QDoubleSpinBox/QComboBox` → `background: transparent`，仅留 1 px 边线（白 70 alpha），hover/focus 时加 26 alpha 白底以示输入态。
+  - `QPushButton#apply` → 透明底 + 1 px 白 90 边线白字，hover 反白（白 235 底 + 深字）。
+  - `QCheckBox::indicator` 未选中态透明底，仅边线（白 110 alpha）；选中态纯白填充。
+- 线框与文字提亮以保证任意背景可读：`#rule` 70 alpha、`#vrule` 52 alpha；文字 `#E9EBEE / #C2C7CC / #B0B6BC / #9AA0A6`，小节标签 `#B4B9BF`。
+
+## 3. 验证
+
+- `cmake --build build -j8` → 0 warning / 0 error。
+- 透明度实证：Xvfb 下 `picom --backend xrender` 合成 + `display -immutable /tmp/bg.png`（`#5a6b7a` 全屏底色）作背景，`import -window root` 截图（`/tmp/ui_onbg2.png`）→ 面板内部完整透出底色，仅线条/文字/控件边框可见。
+- 窗口深度：`xwininfo -id` 报 `Depth: 32`（ARGB visual），证明半透明通道真实存在。
+
+## 4. 遗留风险
+
+1. 无合成器（无 picom/kwin/mutter）时，X11 会忽略 alpha，面板将呈不透明黑底——属平台限制，非代码问题。
+2. 面板无底色，在纯白高亮场景下白字对比度下降；当前用亮度分层的灰阶缓解，未引入文字描边。
+
+---
+
+# 阶段十四：左侧类别导航 + 右侧分类页
+
+## 1. 需求
+
+不要竖排堆叠，改为「右边类别分类」式布局：左侧类别，右侧只显示当前类别的设置内容。
+
+## 2. 实现（`src/ui/Menu.cpp`）
+
+- 主体改为 `QHBoxLayout`：`QListWidget#nav`（88 px）+ 1 px 竖分隔线 + `QStackedWidget`。
+- 导航项「透 视 / 自 瞄 / 扳 机」，`currentRowChanged → QStackedWidget::setCurrentIndex`；默认 `setCurrentRow(0)`。
+- 三页内容：
+  - 页一：透视 8 项复选框（两列）+ 2D 雷达行（半径 74 px）。
+  - 页二：自瞄（启用/过滤队友 + 策略跨列 + 平滑 60 / 范围 80 / 灵敏度 80）。
+  - 页三：扳机（启用 + 按住 78 / 冷却 78）。
+- 导航样式：`::item` 透明 + `#B4B9BF`，hover 白 18 alpha，`:selected` 反白（白 235）+ 深字 `#0F1113`，圆角 7 px、字距 2 px。
+- 面板宽度 `520 → 440`（导航占 88 px 后内容区仍够两列复选框与目标页控件）。
+- 清理：删除已无引用的 `sectionLabel()` helper 与 `QLabel#section` 样式，补 `<QListWidget>` / `<QStackedWidget>` include。
+
+## 3. 验证
+
+- `cmake --build build -j8` → 0 warning / 0 error。
+- Xvfb + `xdotool` 实测点击导航：`/tmp/nav_p2.png`（自瞄页）、`/tmp/nav_p3.png`（扳机页）、`/tmp/nav_p3_comp.png`（picom 合成下）→ 页面切换正确、选中项反白跟随、无控件错位或文字截断。
+
+## 4. 遗留风险
+
+1. 无窗口管理器（纯 Xvfb）时窗口无法被 WM 聚焦，但鼠标事件正常；真实桌面不受影响。
+2. picom xrender 后端在 32 位透明窗口上偶发局部残影（截图里的陈旧内容），属合成器刷新，非布局问题；无合成器直连 X 的截图内容完整。

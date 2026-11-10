@@ -121,3 +121,73 @@ sudo ./build/cs2_lite                        # 以 root 运行
 | 叠加层输入穿透 | `XShapeCombineRectangles(ShapeInput, …)`，Xext 官方文档 |
 | 鼠标合成 | XTest `XTestFakeRelativeMotionEvent` / `XTestFakeButtonEvent` |
 | 参考项目分层 | Osiris（MIT）、TKazer/CS2_External、Exlodium/CS2-External-Base |
+
+## 4. 阶段十扩展（零新增偏移）
+
+本轮扩展的约束：**不读取任何新偏移**，全部基于 `Snapshot` 已采集字段（`health / team / visible / origin / headScreen / feetScreen / distance`）。
+
+| 功能 | 依赖字段 | 配置项 |
+|---|---|---|
+| 血量数值 | `health` | `esp.healthText` |
+| 可见性双态（实线 / 虚线+低透明） | `visible` + `m_bSpotted` | `esp.visibilityCheck` |
+| 2D 雷达（固定北向） | `origin`、`localOrigin`、`distance` | `esp.radar`、`esp.radarRange` |
+| FOV 圈门控着色 | `AppState::aimGate`（Features 写入） | 无（跟随 `aim.scopeKey/fireKey`） |
+| 目标策略（屏幕最近 / 血量最低 / 世界最近） | `headScreen`、`health`、`distance` | `aim.strategy` |
+
+设计取舍：
+
+- 雷达固定北向而非视角对齐 —— 视角 yaw 需从视图矩阵推导，矩阵行列布局未有官方文档确认，按规范不做推测实现。
+- 目标策略在 FOV 内做二次筛选，因此「血量最低」也只在准星附近生效，避免跨图甩枪。
+- 面板与叠加层共用一套配色：深炭 `#12141A`、表面 `#171A21`、强调琥珀 `#E0A23C`、T 方 `#E6A23C`、CT 方 `#4A90E2`；读数字体 `DejaVu Sans Mono`。
+
+
+---
+
+## 5. 阶段十一：面板极简化（黑白双色）
+
+约束：只改 `src/ui/Menu.cpp`、`src/ui/Menu.h`，不触碰采集、偏移、配置字段。
+
+| 项 | 方案 |
+|---|---|
+| 窗口 | `Qt::FramelessWindowHint` + `WA_TranslucentBackground`，`paintEvent` 画圆角玻璃（14 px 圆角、alpha 216 底板、1 px 白色 30 alpha 描边、顶部高光） |
+| 交互 | 自定义拖动（`globalPosition` 差值）、首次居中、右上角 `✕` 关闭 |
+| 布局 | 移除 QGroupBox，改为小节标签（10 px，字母间距 3 px）+ 1 px 分隔线；复选框两列；字段行左对齐、数字框固定宽度 |
+| 配色 | 黑白双色：白 `#F2F3F5` / `#EDEFF2`、灰阶文字 `#E9EAEC`→`#55595F`，无彩色强调 |
+| 叠加层 | 不变。ESP 的 T/CT 双色属于数据语义（区分敌我），不参与面板的黑白收敛 |
+
+---
+
+## 6. 阶段十二：双列表布局
+
+| 项 | 方案 |
+|---|---|
+| 主体 | `QHBoxLayout` 两列 + 1 px 竖分隔线（白色 14 alpha） |
+| 左列 | 透视（复选框两列、雷达行）+ 扳机 |
+| 右列 | 自瞄（策略、平滑、范围、灵敏度）+ 偏移提示 + 应用按钮 |
+| 宽度 | 322 → 520 px；数字框随列宽收窄（雷达 74 / 扳机 78 / 自瞄 80 px） |
+| 不变 | 配置字段、apply 逻辑、黑白双色 QSS、玻璃底板绘制 |
+
+---
+
+## 7. 阶段十三：完全透明背景
+
+| 项 | 方案 |
+|---|---|
+| 底板 | `paintEvent` 不再填充，只画 1 px 圆角线框（白 56 alpha） |
+| 输入控件 | 透明底 + 1 px 边线（白 70 alpha），hover/focus 时 26 alpha 白底 |
+| 主按钮 | 描边样式（白 90 alpha），hover 反白 |
+| 分隔 | 横向 70 alpha、纵向 52 alpha 的 1 px 线 |
+| 可读性 | 文字整体提亮至 `#E9EBEE~#9AA0A6`；依赖合成器，`Depth: 32` ARGB 已确认 |
+
+---
+
+## 8. 阶段十四：左导航 + 右分类页
+
+| 项 | 方案 |
+|---|---|
+| 结构 | `QHBoxLayout`：`QListWidget#nav`（88 px）+ 1 px 竖线 + `QStackedWidget` |
+| 分类 | 透视 / 自瞄 / 扳机，`currentRowChanged → setCurrentIndex`，默认第 0 页 |
+| 导航样式 | 透明底灰字 → hover 白 18 alpha → 选中反白 + 深字，圆角 7 px |
+| 宽度 | 520 → 440 px |
+| 清理 | 删 `sectionLabel()` 与 `QLabel#section`；补 `QListWidget`/`QStackedWidget` include |
+| 不变 | 配置字段与 `apply()` 逻辑、黑白双色、全透明仅线框、底部提示与保存按钮 |
