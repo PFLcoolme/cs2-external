@@ -41,7 +41,8 @@
     "smooth": 5,
     "sensitivityFactor": 0.45,
     "teamCheck": true,
-    "maxDistance": 0.0
+    "maxDistance": 0.0,
+    "strategy": 0
   },
   "trigger": {
     "enabled": false,
@@ -58,6 +59,9 @@
     "skeleton": false,
     "teamCheck": false,
     "visibilityCheck": false,
-    "maxDistance": 0.0
+    "maxDistance": 0.0,
+    "healthText": true,
+    "radar": false,
+    "radarRange": 40.0
   }
 }
