@@ -307,4 +307,98 @@ fireKey  = 1（鼠标左键，开火）；0 = 不要求开火
 2. 开火瞬间自瞄仍在收敛，首帧偏移可能不足；需要更强吸附时可调小 `smooth`。
 3. 若玩家把开镜绑到侧键，需把 `scopeKey` 改为对应键码（`1~5`），或置 `0` 取消开镜要求。
 
+---
+
+# 阶段开发日志 — 阶段八：自瞄「按键无效」的取证与焦点判定修复
+
+## 1. 现象与取证
+
+现象：自瞄改为「开镜 + 开火」后，玩家按住右键 + 左键仍无任何拉枪。
+
+取证一（按键掩码）：独立探针在 CS2 运行中调用 `XTestFakeButtonEvent` 按下/释放 btn1、btn3，并在每步用 `XQueryPointer` 读掩码 —— `btn1 down mask=0x100`、`btn3 down mask=0x400`、释放后归零，且 `XGrabPointer` 返回 `Success`（游戏未持有指针抓取）。结论：`buttonDown` 所用掩码在当前环境可靠。
+
+取证二（注入链路）：以 `/proc/<pid>/mem` 读视图矩阵，发送 `XTestFakeRelativeMotionEvent(40,0)` 后 `view[0]` 变化 `>1e-4`。结论：CS2 会消费 XTest 相对位移，自瞄注入方式有效。
+
+取证三（门控日志）：新增 `WV_DEBUG=1` 诊断后实跑，日志出现
+`[skip] cfg=1 window=121635231 attached=1 active=0 pid=27797` —— 说明 `Features` 线程在 `gameActive()` 处整段跳过，自瞄与扳机代码一次都没执行。根因：`gameActive()` 只读 `_NET_ACTIVE_WINDOW`，全屏/无窗口管理器接管或属性陈旧时该判定为假。
+随后 `xdotool windowactivate <游戏窗口>` 后日志变为 `[gate] ... scope=1 fire=1`，证明按键门控本身正确。
+
+取证四（目标距离）：门控为真时日志为 `[aim] no target in fov=220 nearest=837.6` —— 当时最近敌人头部距屏幕中心 837px，超出配置的 220px FOV，属预期行为而非缺陷。
+
+## 2. 修复
+
+`src/features/Features.cpp`：
+
+- `gameActive()` 改为两级判定：先用 `XGetInputFocus()` 取焦点窗口并沿 `XQueryTree` 父链向上比对（命中游戏窗口或 `_NET_WM_PID` 即视为激活），仅在焦点为 `None` 时回退到 `_NET_ACTIVE_WINDOW`；
+- 焦点为 `PointerRoot`（键盘焦点跟随指针）时取指针下的子窗口作为起点；
+- 签名改为 `gameActive(display, gameWindow, pid)`，调用处同步。
+
+新增诊断（默认零开销，`WV_DEBUG=1` 才输出）：
+
+- `[skip]` 输出 `cfg/window/attached/active/pid`，用于判定哪一项拦住了循环；
+- `[gate]` 输出 `players/scope/fire/fov`；
+- `[aim]` 输出 `no target in fov .. nearest ..` 或 `target idx/err/move`。
+
+## 3. 验证结果
+
+- 构建：`cmake --build build -j8` 成功，0 warning / 0 error。
+- 门控：焦点切到游戏后日志稳定输出 `scope=1 fire=1`；焦点在控制面板时按设计跳过（`active=0`）。
+- 注入：40px 相对位移使视图矩阵首元素变化 0.1179，确认游戏消费。
+- 端到端：隔离目录 `/tmp/wvtest` 以 `fovPixels=3000` 运行，按住双键期间视图矩阵首元素由 0.1798 变为 0.2977（同时段未使用其它位移输入）。
+- **未验证**：原始 220px FOV 下、玩家真实瞄准敌人时的拉枪手感。
+
+## 4. 遗留风险
+
+1. 目标不在 FOV 圆内时自瞄不动作，属设计；需要更宽覆盖时在面板调大「范围(像素)」。
+2. 叠加层探测到窗口不可见（切窗/全屏切换瞬间）会把 `gameWindow` 置 0，该瞬间自瞄随之中断，恢复后自动继续。
+3. 窗口管理器是否更新 `_NET_ACTIVE_WINDOW` 已不影响判定，但焦点链最多上溯 16 层。
+
+# 阶段开发日志 — 阶段九：诊断落盘与物理键位取证
+
+## 1. 现象
+
+玩家反馈「左键没效果、右键有效果」。阶段八的诊断只在 `WV_DEBUG=1` 时输出到 stderr，以 `sudo` 启动或关闭终端后证据即丢失；独立探针进程在命令结束后被回收，日志仅剩一行 `mask=0x0000`，无法与玩家按键时段对齐。
+
+## 2. 改动
+
+`src/features/Features.cpp`：
+
+- 新增 `traceFile()` / `traceToStderr()` / `trace(fmt, ...)`：诊断**始终**追加写入 `/tmp/wv_lite.log`（每次写后 `fflush`），`WV_DEBUG=1` 时同时写 stderr；
+- 新增 `pointerMask(display)`：封装 `XQueryPointer` 的 `state` 读取；
+- 循环最前记录掩码变化：`mask != lastMask_` 时输出 `[btn] mask=0x%04x btn1..btn5`，位于所有门控之前，即使 `gameActive()` 判定为假也能拿到真实键位；
+- `[skip]` / `[gate]` / `[aim]` 改为无条件节流输出（门控每 100 ms、自瞄每 200 次）。
+
+`src/features/Features.h`：新增成员 `unsigned int lastMask_{0}`。
+
+`README.md` 6.3：补充 `/tmp/wv_lite.log` 与 `[btn]/[gate]/[aim]/[skip]` 判读表。
+
+## 3. 验证结果
+
+构建：`cmake --build build -j8` 成功，0 warning / 0 error；`strings build/cs2_lite` 确认 `[btn]` 模板已进二进制。
+
+实跑 `/tmp/wv_lite.log`（CS2 pid=27797，窗口 121635231）：
+
+```
+[btn] mask=0x0100 btn1=1 ...              ← 左键
+[btn] mask=0x0400 btn3=1 ...              ← 右键
+[btn] mask=0x0500 btn1=1 btn3=1 ...       ← 双键同按
+
+[gate] scope=0 fire=0   1707 行
+[gate] scope=0 fire=1     58 行           ← 仅左键
+[gate] scope=1 fire=0     41 行           ← 仅右键
+[gate] scope=1 fire=1     91 行           ← 双键，门控放行
+
+[aim] target idx=798 err=(-14.4,23.0) move=(-1,2)
+[aim] target idx=939 err=(-184.1,-84.7) move=(-17,-8)
+[aim] no target in fov=220 nearest=265.4 players=6
+```
+
+结论：`buttonDown` 对 btn1/btn3 均可靠，`XTestFakeRelativeMotionEvent` 被游戏消费，双键门控放行后自瞄产生实际位移；单独左键不触发是 `scope && fire` 的设计行为，非漏读。`[aim] no target` 的 `nearest` 落在 265~692，说明默认 220px FOV 偏小。
+
+## 4. 遗留风险
+
+1. `/tmp/wv_lite.log` 为纯追加，长期运行需人工清理（当前无轮转）。
+2. 掩码变化行由主循环（1 ms）轮询得到，理论上可能漏掉短于 1 ms 的点按。
+3. `[skip] active=0` 仍会零星出现（切窗/全屏切换瞬间），属叠加层窗口探测的正常抖动，恢复后自动继续。
+
 

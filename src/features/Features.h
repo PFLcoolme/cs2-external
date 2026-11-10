@@ -24,7 +24,7 @@ private:
                  int height);
     void triggerStep(void* display, const Config& config, const Snapshot& snapshot);
 
-    static bool gameActive(void* display, int pid);
+    static bool gameActive(void* display, std::uintptr_t gameWindow, int pid);
     static bool buttonDown(void* display, int button);
 
     Game& game_;
@@ -32,6 +32,9 @@ private:
     std::thread thread_;
     std::atomic_bool running_{false};
     std::chrono::steady_clock::time_point nextTrigger_{};
+    long debugTick_{0};  // 诊断日志节流计数（门控）
+    long debugAimTick_{0};  // 诊断日志节流计数（自瞄）
+    unsigned int lastMask_{0};  // 上一次指针按键掩码，用于记录物理键位变化
 };
 
 }  // namespace wv

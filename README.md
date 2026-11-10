@@ -203,12 +203,25 @@ cmake --build build -j"$(nproc)"
 
 ### 6.3 诊断模式
 
+按键/门控/自瞄链路**始终**追加写入 `/tmp/wv_lite.log`（节流：门控每 100 ms、自瞄每 200 次），加 `WV_DEBUG=1` 可同时输出到终端：
+
 ```bash
-WV_DEBUG=1 ./build/cs2_lite 2>&1 | grep '\[tick\]'
+WV_DEBUG=1 ./build/cs2_lite 2>&1 | grep -E '\[tick\]|\[btn\]|\[gate\]|\[aim\]'
 # [tick] 1920x1080 valid=1 players=15 drawn=15
+# [btn] mask=0x0500 btn1=1 btn2=0 btn3=1 btn4=0 btn5=0
+# [gate] window=121635231 players=15 scope=1 fire=1 fov=220
+# [aim] target idx=939 err=(-184.1,-84.7) move=(-17,-8)
 ```
 
 `valid` = 快照有效；`players` = 采集数；`drawn` = 实际绘制数，两者长期不一致说明被过滤或投影失败。
+
+| 行 | 含义 | 判读 |
+| --- | --- | --- |
+| `[btn]` | 指针按键掩码变化（`Button1Mask`=0x100 … `Button5Mask`=0x1000） | 确认物理按键报的是哪个 ButtonN |
+| `[gate]` | `scope` / `fire` 是否读到 | 两者都为 1 才会执行自瞄 |
+| `[aim]` | `no target … nearest=N` 或 `target idx/err/move` | `nearest` 大于 FOV 半径时属预期不动作 |
+| `[skip]` | `cfg/window/attached/active/pid` 哪一项拦住了循环 | `active=0` 说明焦点不在游戏窗口 |
+
 
 ---
 
