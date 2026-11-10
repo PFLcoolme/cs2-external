@@ -54,7 +54,7 @@
 | 血条 | 目标左侧竖向血条，颜色随血量渐变 | ✅ 可用 |
 | 距离 | 目标脚下显示米数（units × 0.01905） | ✅ 可用 |
 | 骨骼连线 | 头 → 颈 → 胸 → 骨盆，白色连线 | ✅ 可用（版本相关） |
-| 自瞄 | FOV 内最近目标，平滑位移到头部 | ✅ 可用（`key=0` 为无条件） |
+| 自瞄 | FOV 内最近目标，**仅在开镜 + 开火同时按住时**平滑位移到头部 | ✅ 可用 |
 | 扳机 | 准星指向敌人时合成左键点击 | ✅ 可用 |
 | 控制面板 | 实时开关与参数，写回 JSON | ✅ 可用 |
 | 可见性双色 | 基于 `m_bSpotted` 降低不可见目标透明度 | ⚠️ 版本相关（当前恒 0） |
@@ -255,7 +255,8 @@ graph TD
 | `esp` | `visibilityCheck` | `false` | 不可见目标降低不透明度（依赖 `m_bSpotted`） |
 | `esp` | `maxDistance` | `0` | 0 = 不限 |
 | `aim` | `enabled` | `true` | 自瞄总开关 |
-| `aim` | `key` | `0` | `0` = 无条件；`1/2/3` = 左/中/右键 |
+| `aim` | `scopeKey` | `3` | 开镜键（右键）；`0` = 不要求开镜 |
+| `aim` | `fireKey` | `1` | 开火键（左键）；`0` = 不要求开火 |
 | `aim` | `fovPixels` / `smooth` / `sensitivityFactor` | `220` / `5` / `0.45` | 范围、平滑步数、灵敏度 |
 | `trigger` | `enabled` / `key` | `false` / `0` | 扳机开关与触发键 |
 | `trigger` | `delayMs` / `cooldownMs` | `30` / `120` | 按住时长 / 冷却 |
@@ -340,7 +341,7 @@ XTestFakeRelativeMotionEvent(display, moveX, moveY, CurrentTime);
 XTestFakeButtonEvent(display, 1, True, CurrentTime);
 ```
 
-按键判定走 `XQueryPointer` 的 `Button1Mask << (key - 1)`；`key <= 0` 时跳过判定，即无条件执行。
+按键判定走 `XQueryPointer` 的 `Button1Mask << (key - 1)`；`scopeKey` 与 `fireKey` 必须**同时按住**才执行自瞄，任一为 `0` 表示不要求该键。
 
 ---
 

@@ -266,3 +266,45 @@
 3. 无条件自瞄会持续跟随准星附近最近目标，移动鼠标时可能对抗玩家输入；需要时可把 `aim.key` 改回按键值（1~5）。
 4. 叠加层置顶靠 30ms 一次的 `XRaiseWindow`，若游戏使用独占全屏（非无边框窗口）仍可能压不住，需改为无边框全屏。
 
+---
+
+# 阶段开发日志 — 阶段七：自瞄改为「开镜 + 开火」双条件触发
+
+## 1. 需求与设计
+
+无条件自瞄会持续跟随准星附近最近目标，与玩家自己的鼠标输入对抗，且在任何时刻都生效，实际体验不可控。改为**仅在开镜与开火同时按住时**执行自瞄步进：
+
+```text
+aim.enabled && scopeHeld && fireHeld → aimStep()
+scopeKey = 3（鼠标右键，开镜）；0 = 不要求开镜
+fireKey  = 1（鼠标左键，开火）；0 = 不要求开火
+```
+
+按键状态沿用既有 `XQueryPointer` + `Button1Mask << (key - 1)` 判定，不引入新的 X11 调用。
+
+## 2. 变更记录
+
+| 文件 | 变更 |
+|---|---|
+| `src/core/Config.h` | `AimbotConfig.key` 拆为 `scopeKey{3}` / `fireKey{1}` |
+| `src/core/Config.cpp` | 读写的 `aim.key` 改为 `scopeKey` / `fireKey` |
+| `src/features/Features.cpp` | 自瞄条件改为 `scopeHeld && fireHeld` 双键同时按住 |
+| `src/ui/Menu.cpp` | 分组标题 `自瞄（无条件）` → `自瞄（开镜 + 开火）` |
+| `config/default.json` | `aim` 段写入 `scopeKey: 3`、`fireKey: 1` |
+| `build/config.json` | 同步 `scopeKey: 3`、`fireKey: 1` |
+| `README.md` | 特性表、`aim` 字段表、输入合成说明同步 |
+
+## 3. 验证结果
+
+- 构建：`cmake --build build -j8` 成功，0 warning / 0 error。
+- 配置：`config/default.json` 与 `build/config.json` 的 `aim` 段均含 `scopeKey`/`fireKey`，旧 `key` 字段已移除。
+- 字段持久化：`Menu::apply` 以 `Config next = *current` 为基底，仅覆盖面板暴露字段，新键不会在保存时丢失。
+- **未验证**：游戏内「按住右键 + 左键」时的实际跟随效果 —— 验证时 CS2 未运行。
+
+## 4. 遗留风险
+
+1. 双键判定依赖全局指针按键掩码，若游戏捕获鼠标（相对模式）不更新掩码，需改用 XInput2 raw events。
+2. 开火瞬间自瞄仍在收敛，首帧偏移可能不足；需要更强吸附时可调小 `smooth`。
+3. 若玩家把开镜绑到侧键，需把 `scopeKey` 改为对应键码（`1~5`），或置 `0` 取消开镜要求。
+
+

@@ -60,7 +60,7 @@ void Menu::buildUi() {
     root->addWidget(espGroup);
 
     // ---- 自瞄 ----
-    auto* aimGroup = new QGroupBox("自瞄（无条件）", this);
+    auto* aimGroup = new QGroupBox("自瞄（开镜 + 开火）", this);
     auto* aimLayout = new QFormLayout(aimGroup);
     aimEnabled_ = new QCheckBox("启用自瞄", aimGroup);
     aimEnabled_->setChecked(initial.aim.enabled);

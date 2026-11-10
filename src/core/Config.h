@@ -10,7 +10,9 @@ namespace wv {
 
 struct AimbotConfig {
     bool enabled{false};
-    int key{3};  // X11 键码：3 = 鼠标右键（XButton2）；1/2/3 对应左/中/右
+    // 触发条件：开镜键与开火键同时按住才执行；0 = 不要求该按键
+    int scopeKey{3};  // X11 键码：3 = 鼠标右键（开镜）
+    int fireKey{1};   // 1 = 鼠标左键（开火）
     float fovPixels{220.f};
     int smooth{5};
     float sensitivityFactor{0.45f};

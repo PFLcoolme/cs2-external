@@ -54,7 +54,12 @@ void Features::run() {
             continue;
         }
 
-        if (config->aim.enabled && (config->aim.key <= 0 || buttonDown(display, config->aim.key))) {
+        // 自瞄只在「开镜 + 开火」同时按住时执行；任一键为 0 表示不要求该键。
+        const bool scopeHeld =
+            config->aim.scopeKey <= 0 || buttonDown(display, config->aim.scopeKey);
+        const bool fireHeld =
+            config->aim.fireKey <= 0 || buttonDown(display, config->aim.fireKey);
+        if (config->aim.enabled && scopeHeld && fireHeld) {
             aimStep(display, *config, snapshot, attributes.width, attributes.height);
         }
         if (config->trigger.enabled &&

@@ -35,7 +35,8 @@
   },
   "aim": {
     "enabled": true,
-    "key": 0,
+    "scopeKey": 3,
+    "fireKey": 1,
     "fovPixels": 220.0,
     "smooth": 5,
     "sensitivityFactor": 0.45,

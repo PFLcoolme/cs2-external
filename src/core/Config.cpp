@@ -122,7 +122,8 @@ Config Config::load(const std::string& path) {
     if (root.value("aim").isObject()) {
         const QJsonObject o = root.value("aim").toObject();
         cfg.aim.enabled = o.value("enabled").toBool(cfg.aim.enabled);
-        cfg.aim.key = asInt(o, "key", cfg.aim.key);
+        cfg.aim.scopeKey = asInt(o, "scopeKey", cfg.aim.scopeKey);
+        cfg.aim.fireKey = asInt(o, "fireKey", cfg.aim.fireKey);
         cfg.aim.fovPixels = static_cast<float>(o.value("fovPixels").toDouble(cfg.aim.fovPixels));
         cfg.aim.smooth = asInt(o, "smooth", cfg.aim.smooth);
         cfg.aim.sensitivityFactor =
@@ -166,7 +167,8 @@ void Config::save(const std::string& path) const {
 
     QJsonObject aimObj;
     aimObj["enabled"] = aim.enabled;
-    aimObj["key"] = aim.key;
+    aimObj["scopeKey"] = aim.scopeKey;
+    aimObj["fireKey"] = aim.fireKey;
     aimObj["fovPixels"] = static_cast<double>(aim.fovPixels);
     aimObj["smooth"] = aim.smooth;
     aimObj["sensitivityFactor"] = static_cast<double>(aim.sensitivityFactor);
