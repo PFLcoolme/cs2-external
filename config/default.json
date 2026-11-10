@@ -15,6 +15,7 @@
     "entityChunkMask": 511,
     "entityChunkStride": 112,
     "m_iHealth": 0,
+    "m_ArmorValue": 0,
     "m_iTeamNum": 0,
     "m_lifeState": 0,
     "m_pGameSceneNode": 0,
@@ -61,6 +62,8 @@
     "visibilityCheck": false,
     "maxDistance": 0.0,
     "healthText": true,
+    "armor": false,
+    "damageNumbers": false,
     "radar": false,
     "radarRange": 40.0
   }

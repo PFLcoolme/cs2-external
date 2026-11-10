@@ -191,3 +191,62 @@ sudo ./build/cs2_lite                        # 以 root 运行
 | 宽度 | 520 → 440 px |
 | 清理 | 删 `sectionLabel()` 与 `QLabel#section`；补 `QListWidget`/`QStackedWidget` include |
 | 不变 | 配置字段与 `apply()` 逻辑、黑白双色、全透明仅线框、底部提示与保存按钮 |
+
+---
+
+## 9. 阶段十五：热重载 / 可见性优先 / 偏移守卫
+
+| 项 | 方案 |
+|---|---|
+| 热重载 | 复用 400 ms `QTimer` + `QFileInfo::lastModified()` 比对 `configStamp_`，变化则 `Config::load` → 替换 `state_.config` → `syncFrom` 回填控件 |
+| 写盘一致性 | `apply()` 后同步 `configStamp_`，防止自写触发多余重载 |
+| 选靶 | FOV 作为固定门槛；同层内按 strategy 比较，可见目标整层优先（`m_bSpotted`） |
+| 偏移守卫 | 检查 6 类关键偏移，缺失时底部改白字加粗并列出缺项 |
+| 不实现 | 后坐力补偿（无权威偏移）、雷达扇形（view 矩阵手性无法验证） |
+
+---
+
+## 10. 阶段十六：日志页 / 距离分级 / 骨骼关节 / 触发抖动
+
+| 项 | 方案 |
+|---|---|
+| 日志页 | `tailOfLog()` 读末尾 8 KB → 末 16 行；仅当日志页可见时刷新 |
+| 导航 | 4 个 `QPushButton#tab`（checkable + autoExclusive，88×30）替代 QListWidget，规避视口裁剪 |
+| 距离分级 | 透明度 15 m 满亮 → 60 m 0.45，线性；作用于方框 / 骨骼 / 遮挡色 |
+| 骨骼关节 | 每段两端 1.8 px 圆点，透明度随距离衰减 |
+| 扳机 | 仅可见目标；按压时长 ±20% 随机抖动，下限 1 ms |
+
+---
+
+## 11. 阶段十七：配置保存与「上一次配置」回滚
+
+| 项 | 方案 |
+|---|---|
+| 备份 | 每次写盘前把现有 `config.json` 复制为 `config.json.bak`（覆盖前先 `QFile::remove`，`QFile::copy` 不覆盖已有文件） |
+| 统一落盘 | 抽出 `persist(config, message)`：备份 → `Config::save` → 写入 `state_.config` → 同步 `configStamp_` → 状态栏提示 |
+| 回滚 | 底部新增「恢 复 上 一 次」按钮：校验 `.bak` 是可解析的 JSON 对象后 `Config::load` → `syncFrom` → `persist`；因回滚本身也会备份当前配置，再点一次即切回 |
+| 布局 | 底部改为 `QHBoxLayout`：回滚按钮拉伸 1、应用按钮拉伸 2，与既有 `#apply` / `#restore` 两套 QSS 对应 |
+| 忽略 | `.gitignore` 追加 `config.json.bak` |
+
+---
+
+## 12. 阶段十八：三项内存派生功能（护甲 / 掉血浮字 / 准星目标高亮）
+
+| 项 | 方案 |
+|---|---|
+| 护甲数值 | 新增可选偏移 `m_ArmorValue`（cs2-dumper 的 `C_CSPlayerPawn` 字段），偏移为 0 时不读取，`PlayerInfo::armor` 保持 -1，叠加层跳过绘制 |
+| 掉血浮字 | 不引入新偏移：叠加层按实体序号缓存上一帧 `m_iHealth`，掉血即记录差值 + 时间戳，1 s 内上浮淡出；目标消失或序号复用时清理 |
+| 准星高亮 | 复用已有 `m_iIDEntIndex` → `Snapshot::crosshairIndex`，与 `PlayerInfo::index` 相同实体编号空间，命中目标外扩 3 px 白框 |
+| 配置 | `esp.armor`、`esp.damageNumbers` 默认 false，面板第 5 行两个复选，`syncFrom` 与 `apply` 同步 |
+| 落盘 | 偏移键 `m_ArmorValue` 纳入 `Config` 的 offsets 读写与 `OffsetsImporter` 绑定表，`config/default.json` 补默认值 |
+
+---
+
+## 13. 阶段十九：护甲偏移纳入 schema 生成器
+
+| 项 | 方案 |
+|---|---|
+| 生成器 | `tools/cs2_linux_offsets.py` 增加 `need_any(["C_CSPlayerPawn","C_CSPlayerPawnBase"], "m_ArmorValue")`，按继承链取第一个命中（字段声明类随版本变化） |
+| 解析类 | `wanted` 集合补 `C_CSPlayerPawnBase`，否则基类绑定不会被遍历 |
+| 校验 | 本地 pawn 输出增加 `armor=`，与 `health/team` 同批打印；偏移同时写进 `config/offsets.json` |
+| 文档 | README 偏移表与 `esp` 配置表补 `m_ArmorValue` / `armor` / `damageNumbers` |

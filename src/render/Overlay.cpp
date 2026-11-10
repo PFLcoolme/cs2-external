@@ -243,19 +243,50 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
     QPen boxPen;
     boxPen.setWidthF(1.2);
 
+    // 距离分级：15 m 内满亮，60 m 处衰减到 0.45，中间线性。
+    // 只用透明度区分远近，不引入第三种颜色，敌我语义色保持不变。
+    const auto distanceFade = [](float distance) {
+        const float t = std::clamp((distance - 15.f) / (60.f - 15.f), 0.f, 1.f);
+        return 1.f - 0.55f * t;
+    };
+
     drawnCount_ = 0;
+
+    // 掉血浮字：按实体序号比对上一帧血量。只记录「掉血」，回血或换人（序号复用）
+    // 不产生浮字；超过 1 s 或目标消失即清理，避免吃内存。
+    if (config->esp.damageNumbers) {
+        const auto now = std::chrono::steady_clock::now();
+        std::map<int, int> current;
+        for (const PlayerInfo& player : snapshot.players) {
+            current[player.index] = player.health;
+            const auto previous = lastHealth_.find(player.index);
+            if (previous != lastHealth_.end() && previous->second > player.health) {
+                damageMarks_[player.index] = DamageMark{previous->second - player.health, now};
+            }
+        }
+        lastHealth_.swap(current);
+        for (auto it = damageMarks_.begin(); it != damageMarks_.end();) {
+            const bool expired = now - it->second.at > std::chrono::milliseconds(1000);
+            const bool gone = lastHealth_.find(it->first) == lastHealth_.end();
+            it = (expired || gone) ? damageMarks_.erase(it) : std::next(it);
+        }
+    } else {
+        damageMarks_.clear();
+        lastHealth_.clear();
+    }
 
     for (const PlayerInfo& player : snapshot.players) {
         if (config->esp.teamCheck && player.team == snapshot.localTeam) continue;
         if (maxDistance > 0.f && player.distance > maxDistance) continue;
 
+        const float fade = distanceFade(player.distance);
         QColor color = player.team == 2 ? QColor(230, 162, 60) : QColor(74, 144, 226);
         // 可见性双色：可见 = 实线全亮，被遮挡 = 虚线 + 低不透明度。
         boxPen.setStyle(Qt::SolidLine);
-        if (config->esp.visibilityCheck && !player.visible) {
-            color.setAlpha(110);
-            boxPen.setStyle(Qt::DashLine);
-        }
+        color.setAlpha(static_cast<int>(std::lround((config->esp.visibilityCheck && !player.visible)
+                                                       ? 110.f * fade
+                                                       : 255.f * fade)));
+        if (config->esp.visibilityCheck && !player.visible) boxPen.setStyle(Qt::DashLine);
         boxPen.setColor(color);
         painter.setPen(boxPen);
 
@@ -270,6 +301,12 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         if (config->esp.box) {
             painter.drawRect(QRectF(left, top, width, height));
             ++drawnCount_;
+            // 准星目标高亮：m_iIDEntIndex 命中谁，就给谁套一圈白框。
+            if (player.index == snapshot.crosshairIndex) {
+                painter.setPen(QPen(QColor(255, 255, 255, 210), 1.0));
+                painter.drawRect(QRectF(left - 3.f, top - 3.f, width + 6.f, height + 6.f));
+                painter.setPen(boxPen);
+            }
         }
 
         if (config->esp.health) {
@@ -288,6 +325,14 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
                                  QString::number(player.health));
                 painter.setPen(boxPen);
             }
+
+            // 护甲读数排在血量下一行；偏移未配置时 armor 为 -1，不绘制。
+            if (config->esp.armor && player.armor >= 0) {
+                painter.setPen(QColor(150, 180, 212, 220));
+                painter.drawText(QPointF(barLeft - 21.f, top + 20.f),
+                                 QString::number(player.armor));
+                painter.setPen(boxPen);
+            }
         }
 
         if (config->esp.distance) {
@@ -296,12 +341,37 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
             painter.drawText(QPointF(player.headScreen.x - 8.f, bottom + 13.f), text);
         }
 
+        // 掉血浮字：1 s 内由头顶上浮 18 px 并淡出。
+        if (config->esp.damageNumbers) {
+            const auto mark = damageMarks_.find(player.index);
+            if (mark != damageMarks_.end()) {
+                const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - mark->second.at)
+                                     .count();
+                const float progress = std::clamp(static_cast<float>(age) / 1000.f, 0.f, 1.f);
+                painter.setPen(QColor(255, 132, 96,
+                                      static_cast<int>(std::lround(255.f * (1.f - progress)))));
+                painter.drawText(QPointF(player.headScreen.x - 10.f, top - 8.f - 18.f * progress),
+                                 "-" + QString::number(mark->second.amount));
+                painter.setPen(boxPen);
+            }
+        }
+
         if (config->esp.skeleton && !player.skeleton.empty()) {
-            painter.setPen(QPen(QColor(255, 255, 255, 170), 1.0));
+            const QColor boneColor(255, 255, 255, static_cast<int>(std::lround(170.f * fade)));
+            painter.setPen(QPen(boneColor, 1.0));
             for (const auto& segment : player.skeleton) {
                 painter.drawLine(QPointF(segment.first.x, segment.first.y),
                                  QPointF(segment.second.x, segment.second.y));
             }
+            // 关节圆点：每段端点画小圆，让骨骼有落点而不是一堆悬空线。
+            painter.setBrush(boneColor);
+            painter.setPen(Qt::NoPen);
+            for (const auto& segment : player.skeleton) {
+                painter.drawEllipse(QPointF(segment.first.x, segment.first.y), 1.8, 1.8);
+                painter.drawEllipse(QPointF(segment.second.x, segment.second.y), 1.8, 1.8);
+            }
+            painter.setBrush(Qt::NoBrush);
         }
     }
 

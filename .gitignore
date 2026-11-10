@@ -12,6 +12,7 @@ compile_commands.json
 
 # 运行时配置（由 config/default.json 复制生成）
 config.json
+config.json.bak
 
 # 编辑器与系统文件
 .vscode/

@@ -202,6 +202,10 @@ void Game::update(const Vec2& screenOrigin, int width, int height) {
             info.index = i;
             info.team = team;
             info.health = health;
+            // 护甲偏移未配置时保持 -1，叠加层据此跳过绘制。
+            if (offsets_.m_ArmorValue != 0) {
+                info.armor = memory_.read<int>(pawn + offsets_.m_ArmorValue, -1);
+            }
             info.origin = origin;
             info.head = head;
 

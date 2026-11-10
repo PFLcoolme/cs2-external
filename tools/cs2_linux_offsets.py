@@ -487,8 +487,8 @@ def main():
         raise SystemExit("cannot locate libschemasystem.so on disk")
     schema, ss_mod = find_schema_system(proc, so_path)
     wanted = {"C_BaseEntity", "CGameSceneNode", "CSkeletonInstance",
-              "C_CSPlayerPawn", "EntitySpottedState_t", "CCSPlayerController",
-              "CBasePlayerController", "C_BasePlayerPawn"}
+              "C_CSPlayerPawn", "C_CSPlayerPawnBase", "EntitySpottedState_t",
+              "CCSPlayerController", "CBasePlayerController", "C_BasePlayerPawn"}
     fields, class_total = read_schema_classes(proc, schema, ss_mod, wanted)
 
     def need(cls, name):
@@ -498,7 +498,18 @@ def main():
         print(f"[field] {cls}.{name} = {off} ({off:#x})")
         return off
 
+    def need_any(classes, name):
+        """按继承链依次查找：字段由哪个类声明随版本而定（如 m_ArmorValue 在
+        C_CSPlayerPawnBase），命中即返回，全部未命中才报错。"""
+        for cls in classes:
+            off = fields.get(cls, {}).get(name)
+            if off is not None:
+                print(f"[field] {cls}.{name} = {off} ({off:#x})")
+                return off
+        raise SystemExit(f"schema field {name} not resolved in {classes}")
+
     m_iHealth = need("C_BaseEntity", "m_iHealth")
+    m_ArmorValue = need_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"], "m_ArmorValue")
     m_iTeamNum = need("C_BaseEntity", "m_iTeamNum")
     m_lifeState = need("C_BaseEntity", "m_lifeState")
     m_pGameSceneNode = need("C_BaseEntity", "m_pGameSceneNode")
@@ -632,10 +643,11 @@ def main():
     if is_user_ptr(scene):
         origin = tuple(proc.f32(scene + m_vecAbsOrigin + 4 * i) for i in range(3))
     health = proc.i32(pawn + m_iHealth)
+    armor = proc.i32(pawn + m_ArmorValue)
     team = proc.i32(pawn + m_iTeamNum)
     life = proc.u8(pawn + m_lifeState)
     spotted = proc.u8(pawn + m_bSpotted)
-    print(f"[verify] localPawn health={health} team={team} lifeState={life} "
+    print(f"[verify] localPawn health={health} armor={armor} team={team} lifeState={life} "
           f"spotted={spotted} sceneNode={scene and hex(scene) or 'null'} origin={origin}")
     origin_ok = (origin is not None and all(v is not None and abs(v) < 100000 for v in origin)
                  and any(abs(v) > 0.001 for v in origin))
@@ -646,6 +658,7 @@ def main():
         "dwLocalPlayerPawn": rva_local_pawn,
         "dwViewMatrix": rva_view_matrix,
         "m_iHealth": m_iHealth,
+        "m_ArmorValue": m_ArmorValue,
         "m_iTeamNum": m_iTeamNum,
         "m_lifeState": m_lifeState,
         "m_pGameSceneNode": m_pGameSceneNode,

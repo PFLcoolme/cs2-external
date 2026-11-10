@@ -35,6 +35,8 @@ struct EspConfig {
     bool box{true};
     bool health{true};
     bool healthText{true};  // 血量数值文字
+    bool armor{false};      // 护甲数值文字（需 m_ArmorValue 偏移）
+    bool damageNumbers{false};  // 血量掉血浮字
     bool distance{true};
     bool skeleton{false};
     bool radar{false};  // 2D 雷达（固定北向，底部居中）

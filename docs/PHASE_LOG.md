@@ -546,3 +546,175 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 
 1. 无窗口管理器（纯 Xvfb）时窗口无法被 WM 聚焦，但鼠标事件正常；真实桌面不受影响。
 2. picom xrender 后端在 32 位透明窗口上偶发局部残影（截图里的陈旧内容），属合成器刷新，非布局问题；无合成器直连 X 的截图内容完整。
+
+---
+
+# 阶段十五：配置热重载 / 可见性优先选靶 / 偏移守卫
+
+## 1. 需求
+
+从「还能加什么」清单中落地低风险三项：22 配置热加载、13 可见性优先、27 偏移失效守卫。
+
+## 2. 实现
+
+- 配置热重载（`src/ui/Menu.cpp`、`Menu.h`）
+  - 复用已有 400 ms 状态刷新 `QTimer`，用 `QFileInfo::lastModified()` 与成员 `configStamp_` 比对。
+  - mtime 变化 → `Config::load()` → `state_.config.store()` → `syncFrom()` 回填全部控件，无需重启。
+  - `apply()` 写盘后同步 `configStamp_`，避免自己写盘触发一次多余重载。
+- 可见性优先选靶（`src/features/Features.cpp::aimStep`）
+  - FOV 改为固定门槛（旧实现把最近目标的屏幕距离当作 FOV 上限，导致策略 1/2 的候选被错误裁掉）。
+  - 选靶分两层：同 FOV 内 `visible`（`m_bSpotted`）为真的目标优先，无可见目标才退化到遮挡目标；同层内再按策略（屏幕最近 / 血量最低 / 世界最近）比较。
+  - `m_bSpotted` 偏移未配置时 `PlayerInfo::visible` 恒为 true，行为与旧版一致。
+- 偏移守卫（`src/ui/Menu.cpp`）
+  - 依据 `initial.offsets` 检查实体列表 / 本地玩家 / 视图矩阵 / 血量 / 阵营 / 坐标，缺失时底部提示改为高亮告警（`QLabel#warn`，纯白加粗），并列出缺项。
+  - 注意：`Config::load` 会先内嵌偏移、再由 `offsetsFile` 覆盖，守卫判断的是最终生效值，不会误报。
+  - 正常态提示文案改为「偏移来源 X · 偏移改动需重启」（配置文件本身已支持热重载）。
+
+## 3. 验证
+
+- `cmake --build build -j8` → 0 warning / 0 error。
+- 热重载实证：Xvfb 启动面板后外部改写 `build/config.json`（`esp.box` 取反、`esp.radar=true`、`radarRange=88`），2 s 后截图与改写前逐像素比对，差异带落在 `y=347-361`（方框行）与 `y=456-470`（雷达行含半径），证明控件被回填、`state_.config` 已替换。
+- 偏移守卫实证：`build/config.json` 保持 `offsetsFile=config/offsets.json` 时导入真实偏移 → 提示为来源行；清空 `offsetsFile` 且内嵌偏移全 0 → 提示区出现差异带 `y=561-571`（告警行）。
+
+## 4. 未落地项
+
+1. 12 后坐力补偿：`aimPunchCache` 无权威偏移来源，按规范不臆造，暂不实现。
+2. 8 雷达视野扇形：需要可靠的本地朝向。`Snapshot::view` 的手性（forward 取 `+` 或 `-` 第 3 列）无法离线确认，猜错会导致扇形镜像，暂不实现。
+
+---
+
+# 阶段十六：日志页 / 距离分级 / 骨骼关节 / 触发抖动
+
+## 1. 需求
+
+继续清单：25 日志面板、6 距离分级配色、7 骨骼关节圆点、17 扳机随机延迟、18 仅可见目标。
+
+## 2. 实现
+
+- 日志页（`src/ui/Menu.cpp`）
+  - 新增 `tailOfLog()`：`QFile` seek 到末尾 8 KB 读取，避免日志增长后拖慢 UI 线程；截断半行、取末 16 行。
+  - 第四分类「日 志」用只读 `QPlainTextEdit#log`，仅在当前页可见时由 400 ms 定时器刷新，其余页面零开销。
+  - 分类导航由 `QListWidget` 改为 4 个互斥可选中的 `QPushButton#tab`（`setCheckable` + `setAutoExclusive`，固定 88×30）。
+    原因：`QListWidget` 的视口高度受主体区高度约束，第四项会被裁掉（实测 `visualItemRect(3)` 有效但不可见）；按钮列高度由自身决定，不会被压缩。
+- 距离分级（`src/render/Overlay.cpp`）
+  - `distanceFade()`：15 m 内满亮、60 m 衰减到 0.45，线性过渡；只调透明度，不动敌我语义色。
+  - 方框、骨骼、遮挡虚线全部乘以该系数。
+- 骨骼关节圆点：骨骼每段两端画 1.8 px 实心圆，颜色与骨骼同透明度。
+- 扳机（`src/features/Features.cpp::triggerStep`）
+  - 仅对 `visible` 目标开火（`m_bSpotted` 未配置时恒为 true，行为不变）。
+  - 按压时长在 `delayMs` 上做 ±20% 抖动（`std::mt19937` + `std::uniform_int_distribution`），下限夹到 1 ms。
+
+## 3. 验证
+
+- `cmake --build build -j8` → 0 warning / 0 error。
+- 导航实证：Xvfb 截图扫描左列文字带，四个分类渲染于 y=345/388/422/457；点击第四项后差异区 `(437,345)-(841,537)`，右侧出现日志正文行（y=347…403，14 px 行距）。
+- ESP 与扳机改动依赖真实快照 / 按键，仅完成编译验证，未在实机核对。
+
+## 4. 备注
+
+- 阶段十四的 `QListWidget` 导航已被本阶段替换，QSS `QListWidget#nav` 同步删除。
+
+---
+
+# 阶段十七：配置保存与「上一次配置」回滚
+
+## 1. 目标
+
+面板此前只有「应用并保存」一个落盘入口，误改后无法退回上一版配置，只能手工编辑 JSON。
+
+## 2. 实现
+
+- 备份路径（`src/ui/Menu.cpp` 匿名命名空间）
+  - `backupPath(path)` = `path + ".bak"`，与主配置同目录。
+- `Menu::persist(const Config&, const QString& message)`
+  - 若主配置存在：`QFile::remove(backup)` 后 `QFile::copy(target, backup)`。`QFile::copy` 不覆盖已存在目标，必须先删。
+  - `config.save(path_)` → `state_.config.store(...)` → `configStamp_ = QFileInfo(target).lastModified()` → 状态栏文案。
+  - `apply()` 改为直接调用 `persist(next, "已保存并生效")`，行为与旧版一致（多出一次备份）。
+- `Menu::restoreLast()`
+  - 打开 `.bak`，用 `QJsonDocument::fromJson` + `isObject()` 校验；打不开 → 「没有上一次保存的配置」，解析失败 → 「上一次保存的配置已损坏」，两种情况都不改动内存与磁盘配置。
+  - 校验通过后 `Config::load(backup)` → `syncFrom(restored)` → `persist(restored, "已恢复上一次保存")`。
+  - 由于 `persist` 会先把当前配置备份成新的 `.bak`，回滚是**交换**语义：再点一次即切回。
+- 底部布局：`QHBoxLayout`，`恢 复 上 一 次`（`#restore`，拉伸 1）+ `应 用 并 保 存`（`#apply`，拉伸 2）。
+- QSS 新增 `QPushButton#restore` / `:hover` / `:pressed`，采用更暗的描边与文字，避免与主按钮抢层级。
+- `.gitignore` 追加 `config.json.bak`。
+
+## 3. 验证
+
+- `cmake --build build -j8` → 0 warning / 0 error。
+- Xvfb（1280x900）实例化，窗口 440×382 @ (419,258)：
+  - 点击应用按钮后生成 `config.json.bak`，且与点击前的 `config.json` 逐字节一致（`diff -q` 通过）。
+  - 外部把 `esp.box` 改 false、`esp.skeleton` 改 true 后启动并点击「恢复上一次」：`config.json` 回到 `box=true / skeleton=false`，`.bak` 变为 `box=false / skeleton=true`，证明交换语义成立。
+- 像素检查底部按钮行：横向描边段落在 x=437–567 与 578–858，宽度比 1:2，上下边框 y=590 / 639，两个按钮均完整渲染。
+
+## 4. 备注
+
+- 备份策略为单槽位，只保留「上一次」，不做多版本历史；多版本需求另开。
+- 回滚只覆盖 `Config` 已有字段，偏移仍按 `config.json` 生效，运行中不重载偏移（沿用既有约定）。
+
+---
+
+# 阶段十八：三项内存派生功能（护甲 / 掉血浮字 / 准星目标高亮）
+
+## 1. 目标
+
+在不臆造偏移的前提下，把已读到的内存用足：补一个公开字段（护甲），再把已有 `m_iHealth` / `m_iIDEntIndex` 的时序与命中信息转成可视化。
+
+## 2. 实现
+
+- 护甲（新偏移，来源可追溯）
+  - `Offsets::m_ArmorValue`（cs2-dumper `C_CSPlayerPawn` 字段名），`Config` offsets 读写与 `OffsetsImporter` 绑定表补键。
+  - `Game::snapshot` 在 `m_ArmorValue != 0` 时读 `int`，否则 `PlayerInfo::armor` 保持 `-1`。
+  - `Overlay` 仅在 `esp.armor && armor >= 0` 时在血量数字下一行绘制，颜色 `rgb(150,180,212)`。
+- 掉血浮字（零新偏移）
+  - `Overlay` 新增 `lastHealth_`（实体序号 → 上一帧血量）与 `damageMarks_`（序号 → 掉血量 + 时间戳）。
+  - 每帧比对：`previous > current` 记为掉血事件；回血不产生浮字。
+  - 绘制：`-N` 头顶上浮 18 px、1 s 内 alpha 255 → 0，色 `rgb(255,132,96)`。
+  - 清理：超过 1 s 或该序号已不在快照中即 `erase`；功能关闭时两张表整体清空。
+- 准星目标高亮（复用已有 `m_iIDEntIndex`）
+  - `snapshot.crosshairIndex` 与 `PlayerInfo::index` 同为实体列表序号，直接比较。
+  - 命中者在方框外 3 px 追加 1 px 白框；未开启方框时不绘制。
+- 配置与面板
+  - `EspConfig::armor / damageNumbers` 默认 false；`Config::load/save` 增键。
+  - 面板 ESP 页第 5 行：`护甲数值` / `伤害数值`；`syncFrom` 与 `apply` 同步。
+
+## 3. 验证
+
+- `cmake --build build -j8` → 0 warning / 0 error。
+- Xvfb 实例化，右侧内容区文字行带由 4 行增至 5 行（新增 y=450–464 一行）。
+- 点击第 5 行左侧复选后 `config.json` 中 `esp.armor` 由 false 变 true；像素 diff 仅 `(554,449)-(570,466)` 的 16×17 指标框，未波及其他控件。
+- 护甲读数、掉血浮字、准星高亮依赖真实对局内存，当前仅编译与渲染路径验证，未做实机截图。
+
+## 4. 备注
+
+- 本机 `offsets.json` 尚无 `m_ArmorValue`，因此护甲默认不可见；用新版 cs2-dumper 输出该键后导入即生效，未配置时不会误显示 0。
+- 掉血浮字展示的是该实体血量下降，包含队友/其他人造成的伤害，不是「我方命中数」。
+
+---
+
+# 阶段十九：护甲偏移纳入 schema 生成器
+
+## 1. 目标
+
+阶段十八加了护甲读数的代码路径，但本机 `config/offsets.json` 没有 `m_ArmorValue`，功能等于关着。补齐生成器，让偏移从活体 SchemaSystem 取，而不是手填。
+
+## 2. 实现
+
+- `wanted` 集合补 `C_CSPlayerPawnBase`：字段如果由基类声明，不遍历该绑定就取不到。
+- 新增 `need_any(classes, name)`：按继承链顺序查找，命中即返回；全部未命中才 `SystemExit`，不产生默认值。
+- `m_ArmorValue = need_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"], "m_ArmorValue")`。
+- `[verify]` 行补 `armor=`，读本地 pawn 的护甲值用于合理性判断。
+- 结果字典写入 `m_ArmorValue`，与其余字段同一份 `config/offsets.json`。
+
+## 3. 验证（真实运行进程）
+
+- `python3 -m py_compile tools/cs2_linux_offsets.py` 通过。
+- 在对局中的 cs2 进程上实跑：
+  - `[field] C_CSPlayerPawn.m_ArmorValue = 11616 (0x2d60)`
+  - `[verify] localPawn health=100 armor=96 team=3 lifeState=0 ...`
+  - `config/offsets.json` 写出 `"m_ArmorValue": 11616`。
+- `armor=96` 与「满血 100 + 护甲 96」自洽，说明读到的是真实字段而非垃圾值；偏移由 schema 解析而非猜测。
+
+## 4. 备注
+
+- 生成器每跑一次都会用当前游戏版本覆盖 `offsets.json`，游戏更新后重跑即可，无需改代码。
+- 护甲是否显示仍由 `esp.armor` 控制，默认关闭。

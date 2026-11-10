@@ -37,6 +37,7 @@ Offsets offsetsFromJson(const QJsonObject& obj) {
     o.entityChunkStride = asUInt(obj, "entityChunkStride", o.entityChunkStride);
 
     o.m_iHealth = asInt(obj, "m_iHealth", o.m_iHealth);
+    o.m_ArmorValue = asInt(obj, "m_ArmorValue", o.m_ArmorValue);
     o.m_iTeamNum = asInt(obj, "m_iTeamNum", o.m_iTeamNum);
     o.m_lifeState = asInt(obj, "m_lifeState", o.m_lifeState);
     o.m_pGameSceneNode = asInt(obj, "m_pGameSceneNode", o.m_pGameSceneNode);
@@ -72,6 +73,7 @@ QJsonObject offsetsToJson(const Offsets& o) {
     obj["entityChunkMask"] = o.entityChunkMask;
     obj["entityChunkStride"] = static_cast<double>(o.entityChunkStride);
     obj["m_iHealth"] = o.m_iHealth;
+    obj["m_ArmorValue"] = o.m_ArmorValue;
     obj["m_iTeamNum"] = o.m_iTeamNum;
     obj["m_lifeState"] = o.m_lifeState;
     obj["m_pGameSceneNode"] = o.m_pGameSceneNode;
@@ -149,6 +151,8 @@ Config Config::load(const std::string& path) {
         cfg.esp.box = o.value("box").toBool(cfg.esp.box);
         cfg.esp.health = o.value("health").toBool(cfg.esp.health);
         cfg.esp.healthText = o.value("healthText").toBool(cfg.esp.healthText);
+        cfg.esp.armor = o.value("armor").toBool(cfg.esp.armor);
+        cfg.esp.damageNumbers = o.value("damageNumbers").toBool(cfg.esp.damageNumbers);
         cfg.esp.distance = o.value("distance").toBool(cfg.esp.distance);
         cfg.esp.skeleton = o.value("skeleton").toBool(cfg.esp.skeleton);
         cfg.esp.radar = o.value("radar").toBool(cfg.esp.radar);
@@ -195,6 +199,8 @@ void Config::save(const std::string& path) const {
     espObj["box"] = esp.box;
     espObj["health"] = esp.health;
     espObj["healthText"] = esp.healthText;
+    espObj["armor"] = esp.armor;
+    espObj["damageNumbers"] = esp.damageNumbers;
     espObj["distance"] = esp.distance;
     espObj["skeleton"] = esp.skeleton;
     espObj["radar"] = esp.radar;

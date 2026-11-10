@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <random>
 
 namespace wv {
 namespace {
@@ -276,9 +277,8 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
     const float centerY = static_cast<float>(height) * 0.5f;
 
     const PlayerInfo* best = nullptr;
-    float bestDistance = config.aim.fovPixels;
-    float bestHealth = 1e9f;
-    float bestWorld = 1e9f;
+    bool bestVisible = false;
+    float bestMetric = 0.f;
     float nearest = 1e9f;  // 全屏最近目标的屏幕距离，用于诊断 FOV 是否过小
 
     for (const PlayerInfo& player : snapshot.players) {
@@ -290,18 +290,24 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
         const float dy = player.headScreen.y - centerY;
         const float distance = std::sqrt(dx * dx + dy * dy);
         if (distance < nearest) nearest = distance;
-        if (distance >= bestDistance) continue;
+        if (distance >= config.aim.fovPixels) continue;
 
-        // 目标策略：0 = 屏幕最近，1 = 血量最低，2 = 世界最近
+        // 可见性分层：同一 FOV 内优先 m_bSpotted 为真的目标，没有可见目标才退化到遮挡目标。
+        // 偏移未配置时 Game 侧 visible 恒为 true，行为与旧版一致。
+        // 目标策略：0 = 屏幕最近，1 = 血量最低，2 = 世界最近。
+        const bool visible = player.visible;
+        const float metric = config.aim.strategy == 1
+                                 ? static_cast<float>(player.health)
+                                 : (config.aim.strategy == 2 ? player.distance : distance);
         bool better = best == nullptr;
-        if (!better && config.aim.strategy == 1) better = player.health < bestHealth;
-        if (!better && config.aim.strategy == 2) better = player.distance < bestWorld;
+        if (!better) {
+            better = (visible != bestVisible) ? visible : (metric < bestMetric);
+        }
         if (!better) continue;
 
-        bestDistance = distance;
-        bestHealth = static_cast<float>(player.health);
-        bestWorld = player.distance;
         best = &player;
+        bestVisible = visible;
+        bestMetric = metric;
     }
     if (!best) {
         if (++debugAimTick_ % 200 == 0) {
@@ -344,13 +350,21 @@ void Features::triggerStep(void* displayPtr, const Config& config, const Snapsho
     }
     if (!target) return;
     if (config.trigger.teamCheck && target->team == snapshot.localTeam) return;
+    // 只对可见目标开火：m_bSpotted 未配置时 visible 恒为 true，行为不变。
+    if (!target->visible) return;
 
     const auto now = std::chrono::steady_clock::now();
     if (now < nextTrigger_) return;
 
+    // 按压时长在 delayMs 基础上做 ±20% 抖动，避免每次都是同一长度的时间戳。
+    const int base = std::max(1, config.trigger.delayMs);
+    const int jitter = std::max(1, base / 5);
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<int> hold(std::max(1, base - jitter), base + jitter);
+
     XTestFakeButtonEvent(display, 1, True, CurrentTime);
     XFlush(display);
-    std::this_thread::sleep_for(std::chrono::milliseconds(std::max(1, config.trigger.delayMs)));
+    std::this_thread::sleep_for(std::chrono::milliseconds(hold(rng)));
     XTestFakeButtonEvent(display, 1, False, CurrentTime);
     XFlush(display);
 

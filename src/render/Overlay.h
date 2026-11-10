@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <map>
 
 #include "core/Config.h"
 #include "game/Game.h"
@@ -24,6 +25,12 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
+    // 掉血浮字：记录本次掉血量与发生时刻，绘制时按年龄衰减上浮。
+    struct DamageMark {
+        int amount{0};
+        std::chrono::steady_clock::time_point at{};
+    };
+
     void tick();
     std::uintptr_t findGameWindow() const;
     void applyInputPassthrough();
@@ -39,6 +46,8 @@ private:
     int windowWidth_{0};
     int windowHeight_{0};
     std::chrono::steady_clock::time_point lastPaint_{};
+    std::map<int, int> lastHealth_;          // 实体序号 → 上一帧血量
+    std::map<int, DamageMark> damageMarks_;  // 实体序号 → 待绘制的掉血浮字
     QTimer timer_;
 };
 

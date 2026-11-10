@@ -15,6 +15,7 @@ struct PlayerInfo {
     int index{0};
     int team{0};
     int health{0};
+    int armor{-1};  // 护甲值；-1 = 偏移未配置，不绘制
     bool visible{true};  // m_bSpotted；偏移未配置时恒为 true
     Vec3 origin{};  // 脚底世界坐标
     Vec3 head{};    // 头部骨骼世界坐标

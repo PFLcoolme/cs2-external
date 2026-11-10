@@ -33,6 +33,8 @@ const std::vector<FieldBinding>& bindings() {
 
         {"m_iHealth", nullptr,
          [](Offsets& o, std::uint64_t v) { o.m_iHealth = static_cast<int>(v); }},
+        {"m_ArmorValue", nullptr,
+         [](Offsets& o, std::uint64_t v) { o.m_ArmorValue = static_cast<int>(v); }},
         {"m_iTeamNum", nullptr,
          [](Offsets& o, std::uint64_t v) { o.m_iTeamNum = static_cast<int>(v); }},
         {"m_lifeState", nullptr,

@@ -28,6 +28,7 @@ struct Offsets {
 
     // 网络字段
     int m_iHealth{0};
+    int m_ArmorValue{0};  // C_CSPlayerPawn 护甲值；0 = 未配置（不显示护甲）
     int m_iTeamNum{0};
     int m_lifeState{0};
     int m_pGameSceneNode{0};

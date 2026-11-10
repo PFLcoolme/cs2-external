@@ -258,6 +258,7 @@ graph TD
 | `boneStride` / `bonePosX/Y/Z` | 骨骼步长 / 坐标分量 | `32` / `0` / `4` / `8` |
 | `boneHead/Neck/Chest/Pelvis` | 连线骨骼索引 | `6` / `5` / `4` / `0` |
 | `m_bSpotted` | 可见性（1 字节 bool） | `11552` |
+| `m_ArmorValue` | 护甲值（int，`C_CSPlayerPawn`） | `11616`（`0x2D60`） |
 
 ### 7.3 `esp` / `aim` / `trigger`
 
@@ -266,6 +267,7 @@ graph TD
 | `esp` | `enabled` / `box` / `health` / `distance` / `skeleton` | `true` | 绘制开关 |
 | `esp` | `teamCheck` | `false` | 过滤队友 |
 | `esp` | `visibilityCheck` | `false` | 不可见目标降低不透明度（依赖 `m_bSpotted`） |
+| `esp` | `armor` / `damageNumbers` | `false` | 护甲读数 / 掉血浮字 |
 | `esp` | `maxDistance` | `0` | 0 = 不限 |
 | `aim` | `enabled` | `true` | 自瞄总开关 |
 | `aim` | `scopeKey` | `3` | 开镜键（右键）；`0` = 不要求开镜 |
