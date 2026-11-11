@@ -49,3 +49,22 @@ add_custom_command(TARGET cs2_lite POST_BUILD
             ${CMAKE_CURRENT_SOURCE_DIR}/config/offsets.json
             $<TARGET_FILE_DIR:cs2_lite>/config/offsets.json
 )
+
+# ---- 单元测试：不引入第三方框架，直接 ctest 跑 ----
+option(CS2_LITE_BUILD_TESTS "构建单元测试" ON)
+if(CS2_LITE_BUILD_TESTS)
+    enable_testing()
+
+    add_executable(cs2_tests
+        tests/test_main.cpp
+        tests/test_math.cpp
+        tests/test_config.cpp
+        src/core/Config.cpp
+        src/core/OffsetsImporter.cpp
+    )
+    target_include_directories(cs2_tests PRIVATE src)
+    target_link_libraries(cs2_tests PRIVATE Qt6::Core)
+    target_compile_options(cs2_tests PRIVATE -Wall -Wextra -Wpedantic)
+
+    add_test(NAME cs2_tests COMMAND cs2_tests)
+endif()

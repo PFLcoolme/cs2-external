@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <limits>
 
 namespace wv {
 
@@ -41,6 +42,50 @@ inline bool worldToScreen(const Vec3& world, const Mat4& view, const Vec2& origi
 
     out.x = origin.x + (static_cast<float>(width) * 0.5f) * (1.f + x / w);
     out.y = origin.y + (static_cast<float>(height) * 0.5f) * (1.f - y / w);
+    return true;
+}
+
+// 从视图矩阵左上 3x3 推导相机朝向角（世界系 yaw，弧度）。
+// 行主序 + 行向量右乘下，相机 forward 等于第三行取反（相机看向 -Z）。
+// 旋转行长度应接近 1；不接近说明矩阵布局假设不成立，返回 NaN 让调用方回退。
+inline float viewYaw(const Mat4& view) {
+    const float r0 = view.m[2][0];
+    const float r1 = view.m[2][1];
+    const float r2 = view.m[2][2];
+    const float rowLength = std::sqrt(r0 * r0 + r1 * r1 + r2 * r2);
+    if (!std::isfinite(rowLength) || std::fabs(rowLength - 1.f) > 0.05f) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    const float fx = -r0;
+    const float fy = -r1;
+    if (std::fabs(fx) < 1e-6f && std::fabs(fy) < 1e-6f) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    return std::atan2(fy, fx);
+}
+
+// 目标相对屏幕中心的方向（单位向量），用于屏幕外指示。
+// w < 0 表示目标在相机背后，此时 NDC 会翻转，取反才能得到真实方位。
+inline bool screenDirection(const Vec3& world, const Mat4& view, float& dx, float& dy) {
+    const float w = world.x * view.m[3][0] + world.y * view.m[3][1] +
+                    world.z * view.m[3][2] + view.m[3][3];
+    if (!std::isfinite(w) || std::fabs(w) < 1e-4f) return false;
+
+    const float x = world.x * view.m[0][0] + world.y * view.m[0][1] +
+                    world.z * view.m[0][2] + view.m[0][3];
+    const float y = world.x * view.m[1][0] + world.y * view.m[1][1] +
+                    world.z * view.m[1][2] + view.m[1][3];
+
+    dx = x / w;
+    dy = -y / w;  // NDC 的 +y 向上，屏幕 +y 向下
+    if (w < 0.f) {
+        dx = -dx;
+        dy = -dy;
+    }
+    const float length = std::sqrt(dx * dx + dy * dy);
+    if (length < 1e-5f) return false;
+    dx /= length;
+    dy /= length;
     return true;
 }
 

@@ -32,7 +32,9 @@ private:
     void recoilStep(void* display, const Config& config, const Snapshot& snapshot, int height);
 
     static bool gameActive(void* display, std::uintptr_t gameWindow, int pid);
-    static bool buttonDown(void* display, int button);
+    // 统一按键判定：0 = 不限，1..5 = 鼠标 Button1..5，>5 = X11 keysym（键盘）。
+    // 键盘走 XQueryKeymap 轮询，不抓键，游戏侧输入不受影响。
+    static bool keyDown(void* display, int code);
 
     Game& game_;
     AppState& state_;

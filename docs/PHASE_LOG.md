@@ -1036,3 +1036,44 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 2. 屏外箭头用 head 投影判定，头部接近相机平面时 NDC 不稳定，极小角度下可能有抖动。
 3. 雷达半径按水平距离映射，高低差大的地形存在偏差。
 4. 无合成器会话只出静态快照模糊，背景不跟随画面。
+
+---
+
+# 阶段二十八：键盘热键 + 实时统计 + 敌人列表 + 日志轮转 + 单元测试
+
+## 1. 需求
+
+1. 触发键只能绑鼠标 Button1~5，需要支持键盘并做录制式绑定。
+2. 「采集到了但画不出来」时无法在界面上分辨原因。
+3. 远处敌人方框只有几个像素，需要一份紧凑的信息列表。
+4. `/tmp/wv_lite.log` 纯追加无上限，长期挂机会占满 `/tmp`。
+5. 纯数学与配置读写没有任何自动化验证。
+
+## 2. 实现
+
+- `Features::keyDown()` 取代 `buttonDown()`，统一编码：`0` 不限、`1..5` 鼠标、`>5` 为 X11 keysym。键盘走 `XQueryKeymap` 轮询而非 `XGrabKey`，避免把按键从游戏手里抢走。
+- `Menu` 新增 `KeyBindButton`：点击后延迟 180 ms 进入录制（避开触发本次点击的左键释放），按任意键或鼠标中/右键绑定，`Esc` 取消；键名由 `XKeysymToString` 解析，下划线替换为空格。
+- `AppState` 增加 `espSeen / espDrawn / espTeamFiltered / espDistanceFiltered`；`Overlay::paintEvent()` 每帧清零后写入，面板 400 ms 轮询显示「采集 N · 方框 N · 队友 N · 距离 N」。
+- 屏外指示箭头内侧补距离数字，位置沿方向向量内推 24 px。
+- 敌人列表：右侧按距离排序，最多 10 行，颜色随敌我；配置 `esp.enemyList` / `esp.enemyListMax`。
+- 诊断日志轮转：打开时记录已有大小，累计写满 64 KB 检查一次，超过 2 MB 直接截断（不重命名，避免白占双份空间）。
+- `viewYaw()` / `screenDirection()` 从 `Overlay.cpp` 匿名 namespace 移入 `core/Math.h`，Overlay 只保留绘制。
+- 新增 `tests/`：`test_math.cpp`、`test_config.cpp`、`test_util.h`、`test_main.cpp`；`CMakeLists.txt` 增加 `CS2_LITE_BUILD_TESTS` 选项与 `add_test`。
+
+## 3. 验证结果
+
+- `cmake --build build -j` 0 warning / 0 error。
+- `ctest --output-on-failure`：`100% tests passed out of 1`。
+- 首轮测试挂了 5 条，全部是测试自身期望值算错（把 NDC=1 当成屏幕 3/4 处、`viewYaw` 测试矩阵漏了第三行第三个分量），修正后通过——顺带证明正交性自检确实能拦下异常矩阵。
+- 键盘录制：点击后按 `F` 可绑定，面板显示 `F`；鼠标键显示「左键 / 中键 / 右键」。
+- 实时统计行：截图 `/tmp/statc.png` 确认「采集 0 · 当前视野内没有实体」。
+- 面板「屏外指示」「敌人列表」行渲染正常。
+- **未验证**：敌人列表与屏外箭头的游戏内观感（截图时游戏窗口不在前台，叠加层未绘制）。
+
+## 4. 遗留风险
+
+1. `XQueryKeymap` 每个键位每 tick 查询一次（当前最多 5 个），未做单帧缓存；键位增多后应合并为一次查询。
+2. `KeyBindButton` 用 180 ms 延迟区分「点击按钮」和「绑定左键」，快速连点仍可能误绑。
+3. `Offsets.h` 默认 `entityChunkStride{0x78}` 与 `config/default.json` 的 112 不一致，走默认值时扫不到实体。
+4. `Patterns.h` 三条特征码仍为空串，`sig*` 分支不可达。
+5. 敌人列表固定在右侧、按屏幕高度 24% 起排，极端分辨率下可能与雷达/屏外箭头重叠。

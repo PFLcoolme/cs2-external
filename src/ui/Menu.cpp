@@ -16,6 +16,7 @@
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLinearGradient>
 #include <QMouseEvent>
@@ -54,6 +55,7 @@
 #undef Expose
 
 #include <algorithm>
+#include <cstdio>
 
 namespace wv {
 namespace {
@@ -81,6 +83,11 @@ QLabel#title {
 QLabel#field { color: #4A5158; font-size: 11px; }
 QLabel#status {
     color: #5C636B;
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 10px;
+}
+QLabel#stats {
+    color: #8A9199;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 10px;
 }
@@ -310,18 +317,24 @@ private:
     qreal knob_{0.0};
 };
 
-// 鼠标键下拉：X11 核心协议只暴露 Button1~Button5，侧键不在掩码内，
-// 因此只提供 不限 / 左键 / 中键 / 右键，避免给出按键位却读不到状态。
-QComboBox* mouseKeyCombo(QWidget* parent, int value) {
-    auto* combo = new QComboBox(parent);
-    combo->addItem("不限", 0);
-    combo->addItem("左键", 1);
-    combo->addItem("中键", 2);
-    combo->addItem("右键", 3);
-    const int index = combo->findData(value);
-    combo->setCurrentIndex(index >= 0 ? index : 0);
-    combo->setFixedWidth(78);
-    return combo;
+// 按键编码转可读名称。编码与 Features::keyDown 一致：
+// 0 = 不限，1..5 = 鼠标 Button1..5，>5 = X11 keysym。
+// 复用同一个 Display，避免每次刷新都重新连服务器。
+QString describeKey(int code) {
+    if (code <= 0) return "不限";
+    switch (code) {
+        case 1: return "左键";
+        case 2: return "中键";
+        case 3: return "右键";
+        case 4: return "侧键1";
+        case 5: return "侧键2";
+        default: break;
+    }
+    static Display* display = XOpenDisplay(nullptr);
+    const char* name = display ? XKeysymToString(static_cast<KeySym>(code)) : nullptr;
+    if (!name) return QString("键 0x%1").arg(code, 0, 16);
+    // X11 名称用下划线（Shift_L / Caps_Lock），换成空格更好读。
+    return QString::fromLatin1(name).replace('_', ' ');
 }
 
 QLabel* fieldLabel(const QString& text, QWidget* parent) {
@@ -372,6 +385,84 @@ QString tailOfLog(const QString& path, int maxBytes = 8192, int maxLines = 16) {
 
 }  // namespace
 
+// 按键绑定控件：点一下进入录制，随后按任意键（含鼠标中/右键）即绑定。
+// 放在匿名 namespace 之外，Menu.h 才能用前向声明持有它。
+class KeyBindButton : public QPushButton {
+public:
+    explicit KeyBindButton(QWidget* parent = nullptr) : QPushButton(parent) {
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::StrongFocus);
+        setFixedWidth(96);
+        setStyleSheet(
+            "QPushButton{background:transparent;border:1px solid rgba(0,0,0,55);border-radius:6px;"
+            "color:#14181C;font-size:11px;padding:3px 6px;}"
+            "QPushButton:hover{background:rgba(0,0,0,10);border-color:rgba(0,0,0,110);}"
+            "QPushButton:focus{border-color:rgba(0,0,0,170);}");
+        setText(describeKey(code_));
+        connect(this, &QPushButton::clicked, this, [this] {
+            // 延后一点再进入录制：本次点击的左键释放还在路上，
+            // 立刻进入会把「左键」当成绑定值写进去。
+            QTimer::singleShot(180, this, [this] {
+                if (!isVisible()) return;
+                capturing_ = true;
+                setText("按按键…");
+            });
+        });
+    }
+
+    int code() const { return code_; }
+
+    void setCode(int code) {
+        code_ = code;
+        capturing_ = false;
+        setText(describeKey(code_));
+    }
+
+protected:
+    void keyPressEvent(QKeyEvent* event) override {
+        if (!capturing_) {
+            QPushButton::keyPressEvent(event);
+            return;
+        }
+        if (event->key() == Qt::Key_Escape) {
+            setCode(0);  // Esc 取消绑定
+            return;
+        }
+        const int native = event->nativeVirtualKey();  // xcb 平台即 X11 keysym
+        if (native > 5) setCode(native);
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        if (capturing_) {
+            switch (event->button()) {
+                case Qt::LeftButton: setCode(1); return;
+                case Qt::MiddleButton: setCode(2); return;
+                case Qt::RightButton: setCode(3); return;
+                default: break;
+            }
+        }
+        QPushButton::mousePressEvent(event);
+    }
+
+    void focusOutEvent(QFocusEvent* event) override {
+        if (capturing_) {
+            capturing_ = false;
+            setText(describeKey(code_));
+        }
+        QPushButton::focusOutEvent(event);
+    }
+
+private:
+    int code_{0};
+    bool capturing_{false};
+};
+
+KeyBindButton* makeKeyBind(QWidget* parent, int code) {
+    auto* button = new KeyBindButton(parent);
+    button->setCode(code);
+    return button;
+}
+
 Menu::Menu(AppState& state, Game& game, std::string configPath)
     : QWidget(nullptr), state_(state), game_(game), path_(std::move(configPath)) {
     setWindowTitle("CS2 辅助 · 控制面板");
@@ -398,6 +489,23 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
     connect(timer, &QTimer::timeout, this, [this] {
         if (status_ && QDateTime::currentDateTime() >= messageUntil_) {
             status_->setText(QString::fromStdString(game_.status()));
+        }
+
+        // 实时统计：把「采集了但画不出来」的原因摊开，省得靠日志猜。
+        if (stats_) {
+            const std::shared_ptr<Config> current = state_.config.load();
+            const int seen = state_.espSeen.load();
+            if (!game_.attached() || !current || !current->esp.enabled) {
+                stats_->clear();
+            } else if (seen == 0) {
+                stats_->setText("采集 0 · 当前视野内没有实体");
+            } else {
+                stats_->setText(QString("采集 %1 · 方框 %2 · 队友 %3 · 距离 %4")
+                                    .arg(seen)
+                                    .arg(state_.espDrawn.load())
+                                    .arg(state_.espTeamFiltered.load())
+                                    .arg(state_.espDistanceFiltered.load()));
+            }
         }
 
         // 日志区可见时才读文件，滚出视野后零开销。
@@ -625,6 +733,10 @@ void Menu::buildUi() {
     status_->setObjectName("status");
     status_->setWordWrap(true);
     root->addWidget(status_);
+
+    stats_ = new QLabel(this);
+    stats_->setObjectName("stats");
+    root->addWidget(stats_);
     root->addWidget(rule(this));
 
     // ---- 主体：左侧分类列表 + 右侧内容页 ----
@@ -730,6 +842,14 @@ void Menu::buildUi() {
     espOffscreen_ = new ToggleSwitch(this);
     espOffscreen_->setChecked(initial.esp.offscreen);
 
+    espEnemyList_ = new ToggleSwitch(this);
+    espEnemyList_->setChecked(initial.esp.enemyList);
+    espEnemyListMax_ = new QSpinBox(this);
+    espEnemyListMax_->setRange(1, 10);
+    espEnemyListMax_->setSuffix(" 个");
+    espEnemyListMax_->setValue(initial.esp.enemyListMax);
+    espEnemyListMax_->setFixedWidth(70);
+
     espTrail_ = new ToggleSwitch(this);
     espTrail_->setChecked(initial.esp.trail);
     espTrailMs_ = new QSpinBox(this);
@@ -779,8 +899,8 @@ void Menu::buildUi() {
     aimSensitivity_->setSingleStep(0.05);
     aimSensitivity_->setValue(initial.aim.sensitivityFactor);
     aimSensitivity_->setFixedWidth(84);
-    aimScopeKey_ = mouseKeyCombo(this, initial.aim.scopeKey);
-    aimFireKey_ = mouseKeyCombo(this, initial.aim.fireKey);
+    aimScopeKey_ = makeKeyBind(this, initial.aim.scopeKey);
+    aimFireKey_ = makeKeyBind(this, initial.aim.fireKey);
 
     recoilEnabled_ = new ToggleSwitch(this);
     recoilEnabled_->setChecked(initial.recoil.enabled);
@@ -812,7 +932,7 @@ void Menu::buildUi() {
     trackSmooth_->setRange(1, 20);
     trackSmooth_->setValue(initial.track.smooth);
     trackSmooth_->setFixedWidth(66);
-    trackKey_ = mouseKeyCombo(this, initial.track.key);
+    trackKey_ = makeKeyBind(this, initial.track.key);
 
     triggerEnabled_ = new ToggleSwitch(this);
     triggerEnabled_->setChecked(initial.trigger.enabled);
@@ -826,7 +946,7 @@ void Menu::buildUi() {
     triggerCooldown_->setSuffix(" ms");
     triggerCooldown_->setValue(initial.trigger.cooldownMs);
     triggerCooldown_->setFixedWidth(82);
-    triggerKey_ = mouseKeyCombo(this, initial.trigger.key);
+    triggerKey_ = makeKeyBind(this, initial.trigger.key);
 
     silentEnabled_ = new ToggleSwitch(this);
     silentEnabled_->setChecked(initial.silent.enabled);
@@ -843,7 +963,7 @@ void Menu::buildUi() {
     silentHold_->setSuffix(" ms");
     silentHold_->setValue(initial.silent.holdMs);
     silentHold_->setFixedWidth(82);
-    silentKey_ = mouseKeyCombo(this, initial.silent.key);
+    silentKey_ = makeKeyBind(this, initial.silent.key);
 
     // 参数控件直接挂在各行下方的下拉区里，不再需要临时隐藏容器。
 
@@ -874,6 +994,10 @@ void Menu::buildUi() {
         layout->addWidget(paramRow("随视角旋转", espRadarRotate_, parent));
     }));
     espLayout->addWidget(makeRow(espOffscreen_, "屏外指示", ""));
+    espLayout->addWidget(makeRow(espEnemyList_, "敌人列表", "", [this](QVBoxLayout* layout) {
+        QWidget* parent = layout->parentWidget();
+        layout->addWidget(paramRow("最多显示", espEnemyListMax_, parent));
+    }));
     espLayout->addStretch(1);
 
     // ---- 页二：自瞄 ----
@@ -990,6 +1114,8 @@ void Menu::apply() {
     next.esp.radarRotate = espRadarRotate_->isChecked();
     next.esp.radarRange = static_cast<float>(espRadarRange_->value());
     next.esp.offscreen = espOffscreen_->isChecked();
+    next.esp.enemyList = espEnemyList_->isChecked();
+    next.esp.enemyListMax = espEnemyListMax_->value();
     next.esp.trail = espTrail_->isChecked();
     next.esp.trailMs = espTrailMs_->value();
     next.esp.highlight = espHighlight_->isChecked();
@@ -1002,8 +1128,8 @@ void Menu::apply() {
     next.aim.fovPixels = static_cast<float>(aimFov_->value());
     next.aim.sensitivityFactor = static_cast<float>(aimSensitivity_->value());
     next.aim.teamCheck = aimTeam_->isChecked();
-    next.aim.scopeKey = aimScopeKey_->currentData().toInt();
-    next.aim.fireKey = aimFireKey_->currentData().toInt();
+    next.aim.scopeKey = aimScopeKey_->code();
+    next.aim.fireKey = aimFireKey_->code();
 
     next.recoil.enabled = recoilEnabled_->isChecked();
     next.recoil.requireFire = recoilRequireFire_->isChecked();
@@ -1014,18 +1140,18 @@ void Menu::apply() {
     next.track.teamCheck = trackTeam_->isChecked();
     next.track.fovPixels = static_cast<float>(trackFov_->value());
     next.track.smooth = trackSmooth_->value();
-    next.track.key = trackKey_->currentData().toInt();
+    next.track.key = trackKey_->code();
 
     next.silent.enabled = silentEnabled_->isChecked();
     next.silent.teamCheck = silentTeam_->isChecked();
     next.silent.fovPixels = static_cast<float>(silentFov_->value());
     next.silent.holdMs = silentHold_->value();
-    next.silent.key = silentKey_->currentData().toInt();
+    next.silent.key = silentKey_->code();
 
     next.trigger.enabled = triggerEnabled_->isChecked();
     next.trigger.delayMs = triggerDelay_->value();
     next.trigger.cooldownMs = triggerCooldown_->value();
-    next.trigger.key = triggerKey_->currentData().toInt();
+    next.trigger.key = triggerKey_->code();
 
     // 后坐力依赖 punch 角度：两个偏移都缺失时明确告知，不然用户只会看到「没反应」。
     const bool punchReady =
@@ -1101,6 +1227,8 @@ void Menu::syncFrom(const Config& config) {
     espRadarRotate_->setChecked(config.esp.radarRotate);
     espRadarRange_->setValue(static_cast<int>(config.esp.radarRange));
     espOffscreen_->setChecked(config.esp.offscreen);
+    espEnemyList_->setChecked(config.esp.enemyList);
+    espEnemyListMax_->setValue(config.esp.enemyListMax);
     espTrail_->setChecked(config.esp.trail);
     espTrailMs_->setValue(config.esp.trailMs);
     espHighlight_->setChecked(config.esp.highlight);
@@ -1114,10 +1242,8 @@ void Menu::syncFrom(const Config& config) {
     aimFov_->setValue(static_cast<int>(config.aim.fovPixels));
     aimSensitivity_->setValue(config.aim.sensitivityFactor);
     aimTeam_->setChecked(config.aim.teamCheck);
-    const int scopeIndex = aimScopeKey_->findData(config.aim.scopeKey);
-    aimScopeKey_->setCurrentIndex(scopeIndex >= 0 ? scopeIndex : 0);
-    const int fireIndex = aimFireKey_->findData(config.aim.fireKey);
-    aimFireKey_->setCurrentIndex(fireIndex >= 0 ? fireIndex : 0);
+    aimScopeKey_->setCode(config.aim.scopeKey);
+    aimFireKey_->setCode(config.aim.fireKey);
 
     recoilEnabled_->setChecked(config.recoil.enabled);
     recoilRequireFire_->setChecked(config.recoil.requireFire);
@@ -1128,21 +1254,18 @@ void Menu::syncFrom(const Config& config) {
     trackTeam_->setChecked(config.track.teamCheck);
     trackFov_->setValue(static_cast<int>(config.track.fovPixels));
     trackSmooth_->setValue(config.track.smooth);
-    const int trackKeyIndex = trackKey_->findData(config.track.key);
-    trackKey_->setCurrentIndex(trackKeyIndex >= 0 ? trackKeyIndex : 0);
+    trackKey_->setCode(config.track.key);
 
     silentEnabled_->setChecked(config.silent.enabled);
     silentTeam_->setChecked(config.silent.teamCheck);
     silentFov_->setValue(static_cast<int>(config.silent.fovPixels));
     silentHold_->setValue(config.silent.holdMs);
-    const int silentKeyIndex = silentKey_->findData(config.silent.key);
-    silentKey_->setCurrentIndex(silentKeyIndex >= 0 ? silentKeyIndex : 0);
+    silentKey_->setCode(config.silent.key);
 
     triggerEnabled_->setChecked(config.trigger.enabled);
     triggerDelay_->setValue(config.trigger.delayMs);
     triggerCooldown_->setValue(config.trigger.cooldownMs);
-    const int keyIndex = triggerKey_->findData(config.trigger.key);
-    triggerKey_->setCurrentIndex(keyIndex >= 0 ? keyIndex : 0);
+    triggerKey_->setCode(config.trigger.key);
 }
 
 }  // namespace wv

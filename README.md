@@ -51,13 +51,22 @@
 | 能力 | 说明 | 状态 |
 |---|---|---|
 | 方框透视 | 按玩家包围盒绘制矩形，颜色区分敌我 | ✅ 可用 |
-| 血条 | 目标左侧竖向血条，颜色随血量渐变 | ✅ 可用 |
+| 血条 / 数值 | 竖向血条、血量读数、护甲读数 | ✅ 可用 |
 | 距离 | 目标脚下显示米数（units × 0.01905） | ✅ 可用 |
 | 骨骼连线 | 头 → 颈 → 胸 → 骨盆，白色连线 | ✅ 可用（版本相关） |
-| 自瞄 | FOV 内最近目标，**仅在开镜 + 开火同时按住时**平滑位移到头部 | ✅ 可用 |
+| 伤害浮字 | 掉血时浮出损失数值，时长与颜色可调 | ✅ 可用 |
+| 残影轨迹 | 脚底屏幕坐标的历史折线，保留时长可调 | ✅ 可用 |
+| 2D 雷达 | 底部居中，可随视角旋转，半径可调 | ✅ 可用 |
+| 屏外指示 | 视野外敌人在屏幕边缘显示方位箭头与距离 | ✅ 可用 |
+| 敌人列表 | 右侧按距离排序，最多 10 行，显示血量 | ✅ 可用 |
+| 自瞄 | FOV 内目标，**仅在开镜 + 开火同时按住时**平滑位移到头部 | ✅ 可用 |
+| 后坐力抵消 | 按 `m_aimPunchAngle` 反向补偿，可限制仅开火时生效 | ✅ 可用 |
+| 子弹追踪 | 按住触发键把准星贴到最近目标头部 | ✅ 可用 |
+| 静默锁头 | 贴头 → 点击 → 归位，在 `holdMs` 内完成 | ✅ 可用 |
 | 扳机 | 准星指向敌人时合成左键点击 | ✅ 可用 |
-| 控制面板 | 实时开关与参数，写回 JSON | ✅ 可用 |
-| 可见性双色 | 基于 `m_bSpotted` 降低不可见目标透明度 | ⚠️ 版本相关（当前恒 0） |
+| 可见性双色 | 基于 `m_bSpotted` 降低不可见目标透明度 | ✅ 可用（版本相关） |
+| 控制面板 | 左侧分类列表 + 行内下拉参数，实时开关并写回 JSON | ✅ 可用 |
+| 键盘热键 | 触发键可录制键盘键；键盘走 `XQueryKeymap` 轮询，不抓键 | ✅ 可用 |
 
 **明确非目标**
 
@@ -189,6 +198,14 @@ cmake --build build -j"$(nproc)"
 
 产物：`build/cs2_lite`；首次构建会把 `config/default.json` 复制为 `build/config.json`。
 
+### 6.1.1 单元测试
+
+```bash
+cd build && ctest --output-on-failure
+```
+
+覆盖 `worldToScreen` / `viewYaw` / `screenDirection` 以及 `Config` 的默认值与 JSON 往返。`-DCS2_LITE_BUILD_TESTS=OFF` 可关闭测试目标。
+
 ### 6.2 运行
 
 ```bash
@@ -260,23 +277,33 @@ graph TD
 | `m_bSpotted` | 可见性（1 字节 bool） | `11552` |
 | `m_ArmorValue` | 护甲值（int，`C_CSPlayerPawn`） | `11616`（`0x2D60`） |
 
-### 7.3 `esp` / `aim` / `trigger`
+### 7.3 `esp` / `aim` / `recoil` / `track` / `silent` / `trigger`
 
 | 分组 | 字段 | 默认 | 说明 |
 |---|---|---|---|
 | `esp` | `enabled` / `box` / `health` / `distance` / `skeleton` | `true` | 绘制开关 |
-| `esp` | `teamCheck` | `false` | 过滤队友 |
-| `esp` | `visibilityCheck` | `false` | 不可见目标降低不透明度（依赖 `m_bSpotted`） |
-| `esp` | `armor` / `damageNumbers` | `false` | 护甲读数 / 掉血浮字 |
+| `esp` | `healthText` / `armor` / `damageNumbers` | `true` / `false` / `false` | 血量数值 / 护甲 / 掉血浮字 |
+| `esp` | `visibilityCheck` / `teamCheck` | `false` | 遮挡虚线 / 过滤队友 |
+| `esp` | `radar` / `radarRotate` / `radarRange` | `false` / `true` / `40` | 雷达开关、随视角旋转、半径（米） |
+| `esp` | `trail` / `trailMs` | `false` / `220` | 残影轨迹与保留时长 |
+| `esp` | `highlight` | `false` | 最低血量目标描边 |
+| `esp` | `offscreen` | `false` | 屏外敌人方位箭头 |
+| `esp` | `enemyList` / `enemyListMax` | `false` / `5` | 右侧敌人列表与行数上限 |
+| `esp` | `damageMs` / `damageColor` | `800` / `0xFF8460` | 浮字时长与颜色 |
 | `esp` | `maxDistance` | `0` | 0 = 不限 |
 | `aim` | `enabled` | `true` | 自瞄总开关 |
-| `aim` | `scopeKey` | `3` | 开镜键（右键）；`0` = 不要求开镜 |
-| `aim` | `fireKey` | `1` | 开火键（左键）；`0` = 不要求开火 |
+| `aim` | `scopeKey` / `fireKey` | `3` / `1` | 开镜 / 开火键；`0` = 不要求 |
 | `aim` | `fovPixels` / `smooth` / `sensitivityFactor` | `220` / `5` / `0.45` | 范围、平滑步数、灵敏度 |
+| `aim` | `strategy` | `0` | 目标策略：0 屏幕最近 / 1 血量最低 / 2 世界最近 |
+| `recoil` | `enabled` / `strength` / `maxDegrees` / `requireFire` | `false` / `0.6` / `12` / `true` | 后坐力抵消 |
+| `track` | `enabled` / `key` / `fovPixels` / `smooth` | `false` / `1` / `0` / `1` | 子弹追踪 |
+| `silent` | `enabled` / `key` / `holdMs` / `cooldownMs` | `false` / `2` / `30` / `120` | 静默锁头 |
 | `trigger` | `enabled` / `key` | `false` / `0` | 扳机开关与触发键 |
 | `trigger` | `delayMs` / `cooldownMs` | `30` / `120` | 按住时长 / 冷却 |
 
-> 面板点击「应用并保存」后整体替换 `AppState::config`（`atomic<shared_ptr>`），渲染与输入线程下一 tick 自动生效，无需重启。
+> **按键编码**：`0` = 不限；`1..5` = 鼠标 Button1~5；大于 5 的整数是 X11 keysym（面板录制键盘键时写入）。
+>
+> 面板点击「应用并保存」后整体替换 `AppState::config`（`atomic<shared_ptr>`），渲染与输入线程下一 tick 自动生效，无需重启；**偏移改动仍需重启**（`Game` 构造时拷贝 offsets）。
 
 ---
 
@@ -356,7 +383,7 @@ XTestFakeRelativeMotionEvent(display, moveX, moveY, CurrentTime);
 XTestFakeButtonEvent(display, 1, True, CurrentTime);
 ```
 
-按键判定走 `XQueryPointer` 的 `Button1Mask << (key - 1)`；`scopeKey` 与 `fireKey` 必须**同时按住**才执行自瞄，任一为 `0` 表示不要求该键。
+按键判定分两路：鼠标走 `XQueryPointer` 的 `Button1Mask << (code - 1)`；键盘先用 `XKeysymToKeycode` 把 keysym 转成当前布局的 keycode，再查 `XQueryKeymap` 的 256 位掩码——**不抓键**，游戏侧输入照常接收。`scopeKey` 与 `fireKey` 必须**同时按住**才执行自瞄，任一为 `0` 表示不要求该键。
 
 ---
 
@@ -407,7 +434,7 @@ cs2-external/
 │   ├── Main.cpp                # 装配：Game / Menu / Overlay / Features
 │   ├── core/
 │   │   ├── Memory.{h,cpp}      # /proc 定位、pread 读取、模块基址
-│   │   ├── Math.h              # Vec2 / Vec3 / Mat4 / worldToScreen
+│   │   ├── Math.h              # Vec2 / Vec3 / Mat4 / 投影 / 朝向角 / 屏外方向
 │   │   ├── Offsets.h           # 偏移结构体与就绪判定
 │   │   ├── OffsetsImporter.*   # dumper 风格 offsets.json 导入
 │   │   ├── Patterns.h          # 特征码集中表
@@ -415,11 +442,16 @@ cs2-external/
 │   ├── game/
 │   │   ├── Game.{h,cpp}        # 实体分块遍历 → Snapshot
 │   ├── render/
-│   │   └── Overlay.{h,cpp}     # Qt6 透明叠加层
+│   │   └── Overlay.{h,cpp}     # Qt6 透明叠加层（ESP / 雷达 / 屏外指示 / 敌人列表）
 │   ├── features/
-│   │   └── Features.{h,cpp}    # 自瞄 / 扳机线程
+│   │   └── Features.{h,cpp}    # 自瞄 / 追踪 / 静默 / 扳机 / 后坐力线程
 │   └── ui/
-│       └── Menu.{h,cpp}        # 控制面板
+│       └── Menu.{h,cpp}        # 控制面板（左侧分类 + 行内下拉参数）
+├── tests/
+│   ├── test_main.cpp           # ctest 入口
+│   ├── test_math.cpp           # 投影 / 朝向角 / 屏外方向
+│   ├── test_config.cpp         # 默认值与 JSON 往返
+│   └── test_util.h             # 极简断言工具
 └── tools/
     └── cs2_linux_offsets.py    # Linux 偏移生成器（仅读 /proc）
 ```
@@ -462,11 +494,18 @@ type ∈ feat | fix | perf | refactor | docs | chore
 | ✅ | 实体遍历 / 投影 / 骨骼 / 自瞄 / 扳机 |
 | ✅ | 偏移生成器与 dumper 导入 |
 | ✅ | 性能治理（采样与重绘解耦） |
+| ✅ | 后坐力抵消 / 子弹追踪 / 静默锁头 |
+| ✅ | 雷达（随视角旋转）/ 屏外指示 / 敌人列表 |
+| ✅ | 键盘热键（`XQueryKeymap` 轮询）+ 面板录制 |
+| ✅ | 配置热重载（400 ms mtime 轮询） |
+| ✅ | 单元测试（Math / Config，`ctest` 接入） |
+| ✅ | 诊断日志轮转（超 2 MB 截断） |
 | 🚧 | 骨骼全骨架连线（脊柱 + 四肢） |
 | 🚧 | 可见性判定（射线 / BSP 替代 `m_bSpotted`） |
-| 💡 | 配置热重载（文件监听） |
-| 💡 | 单元测试（Math / Config / Importer） |
-| 💡 | CI：构建 + clang-format + 静态分析 |
+| 💡 | CI：构建 + ctest + clang-format + 静态分析 |
+| 💡 | 偏移热更新（当前换偏移需重启） |
+| 💡 | 武器名 / 开镜状态 / 速度 / 闪光遮罩（需生成器命中字段） |
+| 💡 | 侧键（Button6+）支持，需 XInput2 |
 
 ---
 

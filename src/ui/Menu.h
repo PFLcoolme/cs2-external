@@ -24,6 +24,9 @@ class QVBoxLayout;
 
 namespace wv {
 
+// 定义在 Menu.cpp，可录制的按键绑定按钮。
+class KeyBindButton;
+
 class Menu : public QWidget {
     Q_OBJECT
 
@@ -69,6 +72,8 @@ private:
     QCheckBox* espRadarRotate_{nullptr};
     QSpinBox* espRadarRange_{nullptr};
     QCheckBox* espOffscreen_{nullptr};
+    QCheckBox* espEnemyList_{nullptr};
+    QSpinBox* espEnemyListMax_{nullptr};
     QCheckBox* espTrail_{nullptr};
     QSpinBox* espTrailMs_{nullptr};
     QCheckBox* espHighlight_{nullptr};
@@ -83,8 +88,8 @@ private:
     QSpinBox* aimFov_{nullptr};
     QDoubleSpinBox* aimSensitivity_{nullptr};
     QCheckBox* aimTeam_{nullptr};
-    QComboBox* aimScopeKey_{nullptr};
-    QComboBox* aimFireKey_{nullptr};
+    KeyBindButton* aimScopeKey_{nullptr};
+    KeyBindButton* aimFireKey_{nullptr};
 
     QCheckBox* recoilEnabled_{nullptr};
     QDoubleSpinBox* recoilStrength_{nullptr};
@@ -95,20 +100,22 @@ private:
     QCheckBox* trackTeam_{nullptr};
     QSpinBox* trackFov_{nullptr};
     QSpinBox* trackSmooth_{nullptr};
-    QComboBox* trackKey_{nullptr};
+    KeyBindButton* trackKey_{nullptr};
 
     QCheckBox* silentEnabled_{nullptr};
     QCheckBox* silentTeam_{nullptr};
     QSpinBox* silentFov_{nullptr};
     QSpinBox* silentHold_{nullptr};
-    QComboBox* silentKey_{nullptr};
+    KeyBindButton* silentKey_{nullptr};
 
     QCheckBox* triggerEnabled_{nullptr};
     QSpinBox* triggerDelay_{nullptr};
     QSpinBox* triggerCooldown_{nullptr};
-    QComboBox* triggerKey_{nullptr};
+    KeyBindButton* triggerKey_{nullptr};
 
     QLabel* status_{nullptr};
+    // 叠加层每帧的采集/绘制/过滤计数：区分「没敌人」和「被过滤」。
+    QLabel* stats_{nullptr};
     QPlainTextEdit* logView_{nullptr};
 
     // 左侧类别导航 + 右侧分页：类别仍然是四页，页内一个功能一行。

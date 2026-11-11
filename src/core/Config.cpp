@@ -198,6 +198,8 @@ Config Config::load(const std::string& path) {
         cfg.esp.radarRange =
             static_cast<float>(o.value("radarRange").toDouble(cfg.esp.radarRange));
         cfg.esp.offscreen = o.value("offscreen").toBool(cfg.esp.offscreen);
+        cfg.esp.enemyList = o.value("enemyList").toBool(cfg.esp.enemyList);
+        cfg.esp.enemyListMax = asInt(o, "enemyListMax", cfg.esp.enemyListMax);
         cfg.esp.trail = o.value("trail").toBool(cfg.esp.trail);
         cfg.esp.trailMs = asInt(o, "trailMs", cfg.esp.trailMs);
         cfg.esp.highlight = o.value("highlight").toBool(cfg.esp.highlight);
@@ -278,6 +280,8 @@ void Config::save(const std::string& path) const {
     espObj["radarRotate"] = esp.radarRotate;
     espObj["radarRange"] = static_cast<double>(esp.radarRange);
     espObj["offscreen"] = esp.offscreen;
+    espObj["enemyList"] = esp.enemyList;
+    espObj["enemyListMax"] = esp.enemyListMax;
     espObj["trail"] = esp.trail;
     espObj["trailMs"] = esp.trailMs;
     espObj["highlight"] = esp.highlight;

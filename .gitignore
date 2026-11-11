@@ -19,3 +19,7 @@ config.json.bak
 .idea/
 *.swp
 .DS_Store
+
+# Python 缓存（tools/cs2_linux_offsets.py）
+__pycache__/
+*.pyc

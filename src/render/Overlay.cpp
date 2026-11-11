@@ -42,50 +42,6 @@ constexpr int kRaiseEveryTicks = 6;
 constexpr int kWindowProbeTicks = 10;
 const bool kDebugTrace = std::getenv("WV_DEBUG") != nullptr;
 
-// 从视图矩阵左上 3x3 推导相机朝向角（世界系 yaw，弧度）。
-// 项目采用行主序 + 行向量右乘，相机 forward 等于第三行取反（相机看向 -Z）。
-// 旋转行的长度应接近 1；不接近说明矩阵布局假设不成立，返回 NaN 让调用方回退。
-float viewYaw(const Mat4& view) {
-    const float r0 = view.m[2][0];
-    const float r1 = view.m[2][1];
-    const float r2 = view.m[2][2];
-    const float rowLen = std::sqrt(r0 * r0 + r1 * r1 + r2 * r2);
-    if (!std::isfinite(rowLen) || std::fabs(rowLen - 1.f) > 0.05f) {
-        return std::numeric_limits<float>::quiet_NaN();
-    }
-    const float fx = -r0;
-    const float fy = -r1;
-    if (std::fabs(fx) < 1e-6f && std::fabs(fy) < 1e-6f) {
-        return std::numeric_limits<float>::quiet_NaN();
-    }
-    return std::atan2(fy, fx);
-}
-
-// 目标相对屏幕中心的方向（单位向量），用于屏幕外指示。
-// w < 0 表示目标在相机背后，此时 NDC 会翻转，取反才能得到真实方位。
-bool screenDirection(const Vec3& world, const Mat4& view, float& dx, float& dy) {
-    const float w = world.x * view.m[3][0] + world.y * view.m[3][1] +
-                    world.z * view.m[3][2] + view.m[3][3];
-    if (!std::isfinite(w) || std::fabs(w) < 1e-4f) return false;
-
-    const float x = world.x * view.m[0][0] + world.y * view.m[0][1] +
-                    world.z * view.m[0][2] + view.m[0][3];
-    const float y = world.x * view.m[1][0] + world.y * view.m[1][1] +
-                    world.z * view.m[1][2] + view.m[1][3];
-
-    dx = x / w;
-    dy = -y / w;  // NDC 的 +y 向上，屏幕 +y 向下
-    if (w < 0.f) {
-        dx = -dx;
-        dy = -dy;
-    }
-    const float len = std::sqrt(dx * dx + dy * dy);
-    if (len < 1e-5f) return false;
-    dx /= len;
-    dy /= len;
-    return true;
-}
-
 long windowPid(Display* display, Window window) {
     Atom atom = XInternAtom(display, "_NET_WM_PID", False);
     Atom type = 0;
@@ -280,6 +236,12 @@ void Overlay::applyInputPassthrough() {
 }
 
 void Overlay::paintEvent(QPaintEvent* /*event*/) {
+    // 每帧先清零统计：提前 return 时面板读到 0，而不是上一帧的旧值。
+    state_.espSeen.store(0);
+    state_.espDrawn.store(0);
+    state_.espTeamFiltered.store(0);
+    state_.espDistanceFiltered.store(0);
+
     const std::shared_ptr<Config> config = state_.config.load();
     if (!config || !config->esp.enabled) return;
 
@@ -359,9 +321,17 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         }
     }
 
+    int teamFiltered = 0;
+    int distanceFiltered = 0;
     for (const PlayerInfo& player : snapshot.players) {
-        if (config->esp.teamCheck && player.team == snapshot.localTeam) continue;
-        if (maxDistance > 0.f && player.distance > maxDistance) continue;
+        if (config->esp.teamCheck && player.team == snapshot.localTeam) {
+            ++teamFiltered;
+            continue;
+        }
+        if (maxDistance > 0.f && player.distance > maxDistance) {
+            ++distanceFiltered;
+            continue;
+        }
 
         const float fade = distanceFade(player.distance);
         QColor color = player.team == 2 ? QColor(230, 162, 60) : QColor(74, 144, 226);
@@ -484,6 +454,12 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         }
     }
 
+    // 本帧统计交给面板：一眼看出是「没敌人」还是「被过滤」。
+    state_.espSeen.store(static_cast<int>(snapshot.players.size()));
+    state_.espDrawn.store(drawnCount_);
+    state_.espTeamFiltered.store(teamFiltered);
+    state_.espDistanceFiltered.store(distanceFiltered);
+
     // ---- 屏外指示：视野外的敌人在屏幕边缘画箭头指向真实方位 ----
     if (config->esp.offscreen) {
         const float cx = static_cast<float>(width()) * 0.5f;
@@ -533,6 +509,56 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
             painter.setBrush(color);
             painter.drawPolygon(arrow);
             painter.setBrush(Qt::NoBrush);
+
+            // 距离数字贴在箭头内侧，避免压到屏幕边缘或箭头本身。
+            const QPointF labelCenter(tip.x() - dx * 24.f, tip.y() - dy * 24.f);
+            painter.setPen(QPen(color, 1.0));
+            painter.drawText(QRectF(labelCenter.x() - 18.f, labelCenter.y() - 9.f, 36.f, 18.f),
+                             Qt::AlignCenter,
+                             QString::number(static_cast<int>(std::lround(player.distance))));
+        }
+    }
+
+    // ---- 敌人列表：右侧按距离排序。远处方框只有几个像素，靠列表补信息 ----
+    if (config->esp.enemyList) {
+        struct Entry {
+            float distance{0.f};
+            int health{0};
+            int team{0};
+        };
+        std::vector<Entry> entries;
+        for (const PlayerInfo& player : snapshot.players) {
+            if (player.health <= 0) continue;
+            if (config->esp.teamCheck && player.team == snapshot.localTeam) continue;
+            if (maxDistance > 0.f && player.distance > maxDistance) continue;
+            entries.push_back(Entry{player.distance, player.health, player.team});
+        }
+        std::sort(entries.begin(), entries.end(),
+                  [](const Entry& a, const Entry& b) { return a.distance < b.distance; });
+
+        const int limit = std::clamp(config->esp.enemyListMax, 1, 10);
+        const float rowHeight = 21.f;
+        const float rowWidth = 132.f;
+        const float left = static_cast<float>(width()) - rowWidth - 26.f;
+        const float top = static_cast<float>(height()) * 0.24f;
+
+        for (std::size_t i = 0; i < entries.size() && static_cast<int>(i) < limit; ++i) {
+            const Entry& entry = entries.at(i);
+            const QRectF row(left, top + rowHeight * static_cast<float>(i), rowWidth,
+                             rowHeight - 3.f);
+            QColor color = entry.team == 2 ? QColor(230, 162, 60) : QColor(74, 144, 226);
+            QColor back = color;
+            back.setAlpha(38);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(back);
+            painter.drawRoundedRect(row, 4.0, 4.0);
+            painter.setBrush(Qt::NoBrush);
+
+            painter.setPen(color);
+            painter.drawText(row.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                             QString("%1m").arg(static_cast<int>(std::lround(entry.distance))));
+            painter.drawText(row.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignRight,
+                             QString("%1 hp").arg(entry.health));
         }
     }
 

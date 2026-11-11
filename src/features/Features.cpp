@@ -18,9 +18,38 @@ constexpr int kLoopIntervalMs = 1;
 
 // 诊断输出：始终追加写入 /tmp/wv_lite.log（带节流），WV_DEBUG=1 时同时写 stderr。
 // 这样无论以 sudo 还是普通用户启动，都能事后读取按键/门控/目标证据。
-FILE* traceFile() {
-    static FILE* file = std::fopen("/tmp/wv_lite.log", "a");
-    return file;
+// 文件超过 kTraceMaxBytes 就截断重来：纯追加无上限时，长期挂机能把这个文件撑到几百 MB。
+constexpr const char* kTracePath = "/tmp/wv_lite.log";
+constexpr long kTraceMaxBytes = 2L * 1024 * 1024;
+constexpr long kTraceCheckStep = 64L * 1024;  // 每累计写 64 KB 才检查一次，避免频繁 stat
+
+struct TraceSink {
+    FILE* file{nullptr};
+    long size{0};
+    long pending{0};
+};
+
+TraceSink& traceSink() {
+    static TraceSink sink = [] {
+        TraceSink s;
+        s.file = std::fopen(kTracePath, "a");
+        if (s.file) {
+            std::fseek(s.file, 0, SEEK_END);
+            const long end = std::ftell(s.file);
+            s.size = end > 0 ? end : 0;
+        }
+        return s;
+    }();
+    return sink;
+}
+
+// 直接截断而非重命名：面板随时可能读这个文件，留一份 .1 只会白占双倍空间。
+void rotateTrace(TraceSink& sink) {
+    if (!sink.file) return;
+    std::fclose(sink.file);
+    sink.file = std::fopen(kTracePath, "w");
+    sink.size = 0;
+    sink.pending = 0;
 }
 
 bool traceToStderr() {
@@ -29,12 +58,20 @@ bool traceToStderr() {
 }
 
 void trace(const char* format, ...) {
-    FILE* file = traceFile();
+    TraceSink& sink = traceSink();
     va_list args;
     va_start(args, format);
-    if (file) {
-        std::vfprintf(file, format, args);
-        std::fflush(file);
+    if (sink.file) {
+        const int written = std::vfprintf(sink.file, format, args);
+        std::fflush(sink.file);
+        if (written > 0) {
+            sink.size += written;
+            sink.pending += written;
+            if (sink.pending >= kTraceCheckStep) {
+                sink.pending = 0;
+                if (sink.size > kTraceMaxBytes) rotateTrace(sink);
+            }
+        }
     }
     va_end(args);
     if (traceToStderr()) {
@@ -131,9 +168,9 @@ void Features::run() {
 
         // 自瞄只在「开镜 + 开火」同时按住时执行；任一键为 0 表示不要求该键。
         const bool scopeHeld =
-            config->aim.scopeKey <= 0 || buttonDown(display, config->aim.scopeKey);
+            config->aim.scopeKey <= 0 || keyDown(display, config->aim.scopeKey);
         const bool fireHeld =
-            config->aim.fireKey <= 0 || buttonDown(display, config->aim.fireKey);
+            config->aim.fireKey <= 0 || keyDown(display, config->aim.fireKey);
         state_.aimGate.store((scopeHeld && fireHeld) ? 1 : 0);
         if (++debugTick_ % 100 == 0) {
             trace("[gate] window=%lu players=%zu scope=%d fire=%d fov=%.0f\n",
@@ -145,7 +182,7 @@ void Features::run() {
         // 自瞄有开镜前置与灵敏度衰减，追踪没有——准星去哪都先拉回头上。
         // 必须先于自瞄执行并抢占：两个都写相对位移会在一帧内互相拉扯。
         const bool trackHeld =
-            config->track.key <= 0 || buttonDown(display, config->track.key);
+            config->track.key <= 0 || keyDown(display, config->track.key);
         const bool tracking =
             config->track.enabled && trackHeld &&
             trackStep(display, *config, snapshot, attributes.width, attributes.height);
@@ -155,12 +192,12 @@ void Features::run() {
         // 静默锁头：按住触发键时由本进程完成「贴头 + 点击 + 归位」，
         // 玩家不需要把准星放到敌人身上。与普通扳机互斥，否则一次按键会打出两发。
         const bool silentHeld =
-            config->silent.key <= 0 || buttonDown(display, config->silent.key);
+            config->silent.key <= 0 || keyDown(display, config->silent.key);
         const bool silentFired =
             config->silent.enabled && silentHeld &&
             silentStep(display, *config, snapshot, attributes.width, attributes.height);
         if (!silentFired && config->trigger.enabled &&
-            (config->trigger.key <= 0 || buttonDown(display, config->trigger.key))) {
+            (config->trigger.key <= 0 || keyDown(display, config->trigger.key))) {
             triggerStep(display, *config, snapshot);
         }
         // 后坐力抵消独立于自瞄：即使自瞄关闭，也按开火状态反向补偿视角。
@@ -269,24 +306,36 @@ bool Features::gameActive(void* displayPtr, std::uintptr_t gameWindow, int pid) 
     return windowPid(display, active) == pid;
 }
 
-bool Features::buttonDown(void* displayPtr, int button) {
+bool Features::keyDown(void* displayPtr, int code) {
+    if (code <= 0) return true;  // 0 = 不限，恒真
+
     Display* display = static_cast<Display*>(displayPtr);
-    if (!display || button < 1 || button > 5) return false;
+    if (!display) return false;
 
-    Window root = DefaultRootWindow(display);
-    Window rootReturn = 0;
-    Window childReturn = 0;
-    int rootX = 0;
-    int rootY = 0;
-    int winX = 0;
-    int winY = 0;
-    unsigned int mask = 0;
+    if (code <= 5) {
+        Window root = DefaultRootWindow(display);
+        Window rootReturn = 0;
+        Window childReturn = 0;
+        int rootX = 0;
+        int rootY = 0;
+        int winX = 0;
+        int winY = 0;
+        unsigned int mask = 0;
 
-    if (!XQueryPointer(display, root, &rootReturn, &childReturn, &rootX, &rootY, &winX, &winY,
-                       &mask)) {
-        return false;
+        if (!XQueryPointer(display, root, &rootReturn, &childReturn, &rootX, &rootY, &winX, &winY,
+                           &mask)) {
+            return false;
+        }
+        return (mask & (Button1Mask << (code - 1))) != 0;
     }
-    return (mask & (Button1Mask << (button - 1))) != 0;
+
+    // 键盘：keysym 先转成本布局下的 keycode，再查 256 位按键掩码。
+    // 用 XQueryKeymap 而不是 XGrabKey，避免把按键从游戏手里抢走。
+    const KeyCode keycode = XKeysymToKeycode(display, static_cast<KeySym>(code));
+    if (keycode == 0) return false;
+    char keys[32]{};
+    XQueryKeymap(display, keys);
+    return (keys[keycode / 8] & (1 << (keycode % 8))) != 0;
 }
 
 void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& snapshot, int width,

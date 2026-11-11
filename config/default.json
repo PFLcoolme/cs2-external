@@ -93,6 +93,8 @@
     "radarRotate": true,
     "radarRange": 40.0,
     "offscreen": false,
+    "enemyList": false,
+    "enemyListMax": 5,
     "trail": false,
     "trailMs": 220,
     "highlight": false,
