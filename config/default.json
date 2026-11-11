@@ -97,6 +97,8 @@
     "enemyList": false,
     "enemyListMax": 5,
     "heightIndicator": false,
+    "radarPos": 0,
+    "listPos": 2,
     "trail": false,
     "trailMs": 220,
     "highlight": false,

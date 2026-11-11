@@ -573,8 +573,28 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         const int limit = std::clamp(config->esp.enemyListMax, 1, 10);
         const float rowHeight = 21.f;
         const float rowWidth = 132.f;
-        const float left = static_cast<float>(width()) - rowWidth - 26.f;
-        const float top = static_cast<float>(height()) * 0.24f;
+        const float margin = 26.f;
+        const float rowsHeight = rowHeight * static_cast<float>(limit);
+        float left = static_cast<float>(width()) - rowWidth - margin;
+        float top = static_cast<float>(height()) * 0.24f;
+        switch (config->esp.listPos) {
+            case 1:  // 左上
+                left = margin;
+                top = 120.f;
+                break;
+            case 2:  // 右上
+                top = 120.f;
+                break;
+            case 3:  // 左下
+                left = margin;
+                top = static_cast<float>(height()) - rowsHeight - 120.f;
+                break;
+            case 4:  // 右下
+                top = static_cast<float>(height()) - rowsHeight - 120.f;
+                break;
+            default:  // 0 = 右侧居中偏上
+                break;
+        }
 
         for (std::size_t i = 0; i < entries.size() && static_cast<int>(i) < limit; ++i) {
             const Entry& entry = entries.at(i);
@@ -600,8 +620,26 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
     // 关闭时固定北向（世界 +X 向右、+Y 向上）。 ----
     if (config->esp.radar) {
         const float radius = 92.f;
-        const QPointF center(static_cast<float>(width()) * 0.5f,
-                             static_cast<float>(height()) - radius - 56.f);
+        // 位置：0 = 底部居中（默认），其余按四角摆放并留 24 px 边距。
+        const float margin = 24.f;
+        const float topInset = radius + 88.f;  // 左上/右上要避开屏幕顶部的自身 HUD
+        QPointF center;
+        switch (config->esp.radarPos) {
+            case 1: center = QPointF(radius + margin, topInset); break;
+            case 2: center = QPointF(static_cast<float>(width()) - radius - margin, topInset); break;
+            case 3:
+                center = QPointF(radius + margin,
+                                 static_cast<float>(height()) - radius - margin);
+                break;
+            case 4:
+                center = QPointF(static_cast<float>(width()) - radius - margin,
+                                 static_cast<float>(height()) - radius - margin);
+                break;
+            default:
+                center = QPointF(static_cast<float>(width()) * 0.5f,
+                                 static_cast<float>(height()) - radius - 56.f);
+                break;
+        }
         painter.setPen(QPen(QColor(230, 162, 60, 70), 1.0));
         painter.setBrush(QColor(12, 14, 18, 110));
         painter.drawEllipse(center, radius, radius);

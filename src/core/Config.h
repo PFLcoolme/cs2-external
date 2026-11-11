@@ -82,6 +82,9 @@ struct EspConfig {
     bool enemyList{false};   // 右侧敌人列表：按距离排序，补远处方框看不清
     int enemyListMax{5};     // 列表最多显示行数
     bool heightIndicator{false};  // 目标与本地的高度差（▲ 楼上 / ▼ 楼下）
+    // HUD 位置：0 底部居中 / 1 左上 / 2 右上 / 3 左下 / 4 右下
+    int radarPos{0};
+    int listPos{2};
     bool trail{false};       // 残影轨迹：脚底屏幕坐标的历史折线
     int trailMs{220};        // 轨迹保留时长（毫秒）
     bool highlight{false};   // 最低血量目标描边（准星目标仍用白框）

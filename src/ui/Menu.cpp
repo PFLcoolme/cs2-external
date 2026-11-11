@@ -341,6 +341,20 @@ QString describeKey(int code) {
     return QString::fromLatin1(name).replace('_', ' ');
 }
 
+// HUD 位置下拉：0 底部居中 / 1 左上 / 2 右上 / 3 左下 / 4 右下。
+QComboBox* posCombo(QWidget* parent, int value) {
+    auto* combo = new QComboBox(parent);
+    combo->addItem("底部居中", 0);
+    combo->addItem("左上", 1);
+    combo->addItem("右上", 2);
+    combo->addItem("左下", 3);
+    combo->addItem("右下", 4);
+    const int index = combo->findData(value);
+    combo->setCurrentIndex(index >= 0 ? index : 0);
+    combo->setFixedWidth(96);
+    return combo;
+}
+
 QLabel* fieldLabel(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text, parent);
     label->setObjectName("field");
@@ -880,6 +894,9 @@ void Menu::buildUi() {
     espHeight_ = new ToggleSwitch(this);
     espHeight_->setChecked(initial.esp.heightIndicator);
 
+    espRadarPos_ = posCombo(this, initial.esp.radarPos);
+    espListPos_ = posCombo(this, initial.esp.listPos);
+
     espTrail_ = new ToggleSwitch(this);
     espTrail_->setChecked(initial.esp.trail);
     espTrailMs_ = new QSpinBox(this);
@@ -1028,12 +1045,14 @@ void Menu::buildUi() {
     espLayout->addWidget(makeRow(espRadar_, "2D 雷达", "", [this](QVBoxLayout* layout) {
         QWidget* parent = layout->parentWidget();
         layout->addWidget(paramRow("半径", espRadarRange_, parent));
+        layout->addWidget(paramRow("位置", espRadarPos_, parent));
         layout->addWidget(paramRow("随视角旋转", espRadarRotate_, parent));
     }));
     espLayout->addWidget(makeRow(espOffscreen_, "屏外指示", ""));
     espLayout->addWidget(makeRow(espEnemyList_, "敌人列表", "", [this](QVBoxLayout* layout) {
         QWidget* parent = layout->parentWidget();
         layout->addWidget(paramRow("最多显示", espEnemyListMax_, parent));
+        layout->addWidget(paramRow("位置", espListPos_, parent));
     }));
     espLayout->addWidget(makeRow(espHeight_, "高度差", ""));
     espLayout->addStretch(1);
@@ -1177,6 +1196,8 @@ void Menu::apply() {
     next.esp.enemyList = espEnemyList_->isChecked();
     next.esp.enemyListMax = espEnemyListMax_->value();
     next.esp.heightIndicator = espHeight_->isChecked();
+    next.esp.radarPos = espRadarPos_->currentData().toInt();
+    next.esp.listPos = espListPos_->currentData().toInt();
     next.esp.trail = espTrail_->isChecked();
     next.esp.trailMs = espTrailMs_->value();
     next.esp.highlight = espHighlight_->isChecked();
@@ -1294,6 +1315,9 @@ void Menu::syncFrom(const Config& config) {
     espEnemyList_->setChecked(config.esp.enemyList);
     espEnemyListMax_->setValue(config.esp.enemyListMax);
     espHeight_->setChecked(config.esp.heightIndicator);
+    espRadarPos_->setCurrentIndex(
+        std::clamp(espRadarPos_->findData(config.esp.radarPos), 0, 4));
+    espListPos_->setCurrentIndex(std::clamp(espListPos_->findData(config.esp.listPos), 0, 4));
     espTrail_->setChecked(config.esp.trail);
     espTrailMs_->setValue(config.esp.trailMs);
     espHighlight_->setChecked(config.esp.highlight);
