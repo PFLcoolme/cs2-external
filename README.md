@@ -149,7 +149,7 @@ graph LR
 | 类别 | 选型 | 说明 |
 |---|---|---|
 | 语言 | C++20 | 使用 `std::atomic<std::shared_ptr<T>>` 做无锁配置交换 |
-| 编译器 | GCC 13+ / Clang 16+ | CI 实测 GCC 16.2.1 |
+| 编译器 | GCC 13+ / Clang 16+ | CI 在 `ubuntu-24.04` 上构建并跑测试 |
 | GUI | Qt6 Widgets（X11） | 叠加层与控制面板共用一套事件循环 |
 | 构建 | CMake ≥ 3.21 + Ninja（可选） | `AUTOMOC`，`-Wall -Wextra -Wpedantic` |
 | 系统库 | libX11 / libXext / libXtst | XShape 输入穿透、XTest 输入合成 |
@@ -502,7 +502,8 @@ type ∈ feat | fix | perf | refactor | docs | chore
 | ✅ | 诊断日志轮转（超 2 MB 截断） |
 | 🚧 | 骨骼全骨架连线（脊柱 + 四肢） |
 | 🚧 | 可见性判定（射线 / BSP 替代 `m_bSpotted`） |
-| 💡 | CI：构建 + ctest + clang-format + 静态分析 |
+| ✅ | CI：推送 / PR 自动构建 + `ctest`（`ubuntu-24.04`） |
+| 💡 | CI 扩展：clang-format 检查 + 静态分析 |
 | 💡 | 偏移热更新（当前换偏移需重启） |
 | 💡 | 武器名 / 开镜状态 / 速度 / 闪光遮罩（需生成器命中字段） |
 | 💡 | 侧键（Button6+）支持，需 XInput2 |
