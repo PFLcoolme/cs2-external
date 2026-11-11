@@ -135,17 +135,16 @@ QPushButton#restore:hover { background: rgba(255, 255, 255, 30); color: #F2F3F5;
 QPushButton#restore:pressed { background: rgba(255, 255, 255, 70); color: #0F1113; }
 QPushButton#apply:pressed { background: rgba(255, 255, 255, 180); color: #0F1113; }
 QPushButton#tab {
-    background: transparent;
-    border: none;
+    background: rgba(255, 255, 255, 12);
+    border: 1px solid rgba(255, 255, 255, 26);
     border-radius: 7px;
     color: #B4B9BF;
     font-size: 12px;
     letter-spacing: 2px;
-    text-align: left;
-    padding: 6px 8px;
+    padding: 0 6px;
 }
-QPushButton#tab:hover { background: rgba(255, 255, 255, 18); color: #F2F3F5; }
-QPushButton#tab:checked { background: rgba(255, 255, 255, 235); color: #0F1113; }
+QPushButton#tab:hover { background: rgba(255, 255, 255, 28); color: #F2F3F5; }
+QPushButton#tab:checked { background: rgba(255, 255, 255, 235); color: #0F1113; border-color: transparent; }
 QPushButton#close {
     background: transparent;
     border: 0;
@@ -418,14 +417,11 @@ void Menu::buildUi() {
     root->addWidget(status_);
     root->addWidget(rule(this));
 
-    // ---- 主体：左侧类别导航 + 右侧单行功能表 ----
-    auto* body = new QHBoxLayout();
-    body->setSpacing(14);
-
-    // 类别导航：四个互斥按钮，点击只切右侧分页。类别保留，页内改成一行一个功能。
-    auto* navCol = new QVBoxLayout();
-    navCol->setSpacing(4);
-    navCol->setContentsMargins(0, 0, 0, 0);
+    // ---- 主体：顶部横向类别栏 + 单行功能表 ----
+    // 类别按钮横排铺满一行，避免左侧竖直堆放时挤成一团。
+    auto* navBar = new QHBoxLayout();
+    navBar->setSpacing(6);
+    navBar->setContentsMargins(0, 0, 0, 0);
     const QStringList tabNames{"透 视", "自 瞄", "扳 机", "日 志"};
     for (int i = 0; i < tabNames.size(); ++i) {
         auto* tab = new QPushButton(tabNames.at(i), this);
@@ -434,20 +430,20 @@ void Menu::buildUi() {
         tab->setAutoExclusive(true);
         tab->setCursor(Qt::PointingHandCursor);
         tab->setFocusPolicy(Qt::NoFocus);
-        tab->setFixedSize(78, 30);
-        navCol->addWidget(tab);
+        tab->setFixedHeight(30);
+        tab->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        navBar->addWidget(tab, 1);
         tabs_[i] = tab;
         connect(tab, &QPushButton::clicked, this, [this, i] { pages_->setCurrentIndex(i); });
     }
-    navCol->addStretch(1);
     if (tabs_[0]) tabs_[0]->setChecked(true);
 
     pages_ = new QStackedWidget(this);
     pages_->setObjectName("pages");
 
-    body->addLayout(navCol);
-    body->addWidget(pages_, 1);
-    root->addLayout(body, 1);
+    root->addLayout(navBar);
+    root->addSpacing(8);
+    root->addWidget(pages_, 1);
 
     // 每页一个竖排行表：行高固定，内容超出时页内滚动。
     auto addPage = [this]() -> QVBoxLayout* {

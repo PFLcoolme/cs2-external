@@ -373,7 +373,7 @@ sudo ./build/cs2_lite                        # 以 root 运行
 
 | 项 | 变更点 | 说明 |
 | --- | --- | --- |
-| 布局 | `Menu::buildUi()` | 保留左侧 `tabs_[4]`（透 视 / 自 瞄 / 扳 机 / 日 志）+ `QStackedWidget` 四页；每页一个 `QScrollArea`（横滚关闭，最小高 330）内 `QVBoxLayout` 单列行表 |
+| 布局 | `Menu::buildUi()` | 类别栏改为顶部 `QHBoxLayout` 横排四等分按钮（`tabs_[4]`，高 30），下方 `QStackedWidget` 四页；每页一个 `QScrollArea`（横滚关闭，最小高 330）内 `QVBoxLayout` 单列行表 |
 | 行 | `Menu::makeRow()` | `QWidget#row` + `QCheckBox`（功能开关）+ 右侧 `QLabel#hint`；有参数的行走「右键参数」提示 |
 | 弹层 | `Menu::attachParams()` / `ensurePopup()` | `Qt::Popup` 子窗口，行与勾选框都挂 `CustomContextMenu`；首次右键惰性构建并缓存到 `QHash<QString, QWidget*> popups_`，之后再右键只 `move/show/raise` |
 | 落盘 | `Menu::eventFilter()` | 监听弹层 `QEvent::Hide` → `apply()`；弹层一关即写 `config.json`，不必回底部点保存 |

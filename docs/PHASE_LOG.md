@@ -935,7 +935,7 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 
 - `src/ui/Menu.h`：恢复 `tabs_[4]` 与 `pages_`（`QStackedWidget`）成员，保留 `popups_` / `popupBuilders_` 与 `makeRow` / `attachParams` / `ensurePopup` / `eventFilter` 声明；`status_`、`logView_` 与全部参数控件指针不变。
 - `src/ui/Menu.cpp`：
-  - `buildUi()`：header → status → 分隔线 → `QHBoxLayout`（左侧 `tabs_[4]` 竖排按钮，`78x30`、`autoExclusive`、`#tab` 选中态白底反色；右侧 `QStackedWidget` 四页）→ 分隔线 → hint → 底部「恢 复 上 一 次 / 应 用 并 保 存」。
+  - `buildUi()`：header → status → 分隔线 → **顶部横向类别栏**（`QHBoxLayout`、四等分、按钮高 30、`autoExclusive`、`#tab` 常态半透明底 + 选中白底反色）→ `QStackedWidget` 四页 → 分隔线 → hint → 底部「恢 复 上 一 次 / 应 用 并 保 存」。首版把类别按钮竖排在左栏，用户反馈「左上角有一堆按键糊一块」，改为顶部横排铺满一行。
   - `addPage()` 页工厂：每页一个 `QScrollArea`（`setWidgetResizable(true)`、`NoFrame`、横滚 `AlwaysOff`、`setMinimumHeight(330)`）+ 单列 `QVBoxLayout`（`spacing 2`、右边距 6）。`setMinimumHeight(330)` 是为了避免空页把 `QStackedWidget` 压扁（首版曾压到窗口 440x375）。
   - 行分布：透视 13 行（伤害浮字 / 残影轨迹 / 2D 雷达 带参数）、自瞄 3 行（自瞄 / 后坐力抵消 / 子弹追踪）、扳机 2 行（自动扳机 / 静默锁头）、日志页放 `logView_`（`minimumHeight 200`）。
   - `makeRow()`：`QWidget#row` 内 `QCheckBox` + `addStretch(1)` + 右侧 `QLabel#hint`，行高由 `contentsMargins(8,3,8,3)` 决定，实测行距 25 px。
@@ -948,8 +948,8 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 ## 3. 验证结果
 
 - 构建：`cmake --build build -j8` 成功，0 warning / 0 error。
-- 界面（Xvfb `:98`，1280x800x24，`WV_SKIP_OFFSETS=1`）：窗口 `440x505`；透视页 13 行一次排完（行带 `227-555`，每行 25 px），左栏 4 个类别按钮，选中项白底 `y=226-255`。
-- 类别切换：点「自 瞄」后选中态移到 `260-289`，页内 3 行（`231/257/283`）；点「扳 机」选中 `294-323`，2 行；点「日 志」选中 `328-357`，日志区渲染。
+- 界面（Xvfb `:98`，1280x800x24，`WV_SKIP_OFFSETS=1`）：顶部类别栏横排，窗口 `440x553`；透视页 13 行一次排完（行带 `251-579`，行距 25 px）；选中项为白底按钮 `437-533`，切到「自 瞄」后选中项移到 `541-634`。
+- 类别切换：点「自 瞄」选中态移到第二格，右键首行弹出 `258x338` 的自瞄弹层；扳机页 2 行、日志页渲染日志区。
 - 右键弹层：伤害浮字 `258x147`、自瞄参数 `258x338`、自动扳机 `258x195`，均未越出窗口/屏幕。
 - 弹层落盘：伤害浮字弹层内「显示时长」`800`→`802`，关闭后 `build/config.json` 的 `esp.damageMs=802`；勾选框 `aim.enabled` true→false 经弹层关闭后落盘。
 - 无参数行（方框 / 血量条 / 过滤队友等）右键不出弹层，符合预期。
