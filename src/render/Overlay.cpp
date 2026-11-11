@@ -368,6 +368,32 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
             }
         }
 
+        // 高度差：只看 z 轴差值。多层图里光看方框分不清敌人在楼上还是楼下。
+        if (config->esp.heightIndicator) {
+            const float dz = (player.origin.z - snapshot.localOrigin.z) * 0.01905f;
+            if (std::fabs(dz) >= 0.6f) {
+                const bool above = dz > 0.f;
+                const float centerX = left + width * 0.5f;
+                const float tipY = above ? top - 14.f : top - 4.f;
+                QPolygonF triangle;
+                if (above) {
+                    triangle << QPointF(centerX, tipY - 5.f) << QPointF(centerX - 4.f, tipY + 2.f)
+                             << QPointF(centerX + 4.f, tipY + 2.f);
+                } else {
+                    triangle << QPointF(centerX, tipY + 5.f) << QPointF(centerX - 4.f, tipY - 2.f)
+                             << QPointF(centerX + 4.f, tipY - 2.f);
+                }
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(color);
+                painter.drawPolygon(triangle);
+                painter.setBrush(Qt::NoBrush);
+                painter.setPen(color);
+                painter.drawText(QRectF(centerX + 7.f, tipY - 7.f, 46.f, 14.f),
+                                 Qt::AlignLeft | Qt::AlignVCenter,
+                                 QString::number(std::fabs(dz), 'f', 1));
+            }
+        }
+
         if (config->esp.health) {
             const float barWidth = 3.f;
             const float barLeft = left - 6.f;
@@ -597,6 +623,19 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         }
 
         const float range = std::max(5.f, config->esp.radarRange);
+
+        // 距离圈：半径三等分并标出对应米数，否则光有圆点判断不出远近。
+        for (int ring = 1; ring <= 3; ++ring) {
+            const float ringRadius = radius * (static_cast<float>(ring) / 3.f);
+            painter.setPen(QPen(QColor(230, 162, 60, 26), 1.0));
+            painter.drawEllipse(center, ringRadius, ringRadius);
+            painter.setPen(QPen(QColor(230, 162, 60, 80), 1.0));
+            painter.drawText(
+                QRectF(center.x() + ringRadius - 28.f, center.y() - 13.f, 26.f, 12.f),
+                Qt::AlignRight | Qt::AlignVCenter,
+                QString::number(static_cast<int>(range * static_cast<float>(ring) / 3.f)));
+        }
+
         for (const PlayerInfo& player : snapshot.players) {
             if (maxDistance > 0.f && player.distance > maxDistance) continue;
             if (player.distance > range) continue;

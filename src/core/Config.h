@@ -79,6 +79,7 @@ struct EspConfig {
     bool offscreen{false};   // 视野外敌人：屏幕边缘画箭头指方位
     bool enemyList{false};   // 右侧敌人列表：按距离排序，补远处方框看不清
     int enemyListMax{5};     // 列表最多显示行数
+    bool heightIndicator{false};  // 目标与本地的高度差（▲ 楼上 / ▼ 楼下）
     bool trail{false};       // 残影轨迹：脚底屏幕坐标的历史折线
     int trailMs{220};        // 轨迹保留时长（毫秒）
     bool highlight{false};   // 最低血量目标描边（准星目标仍用白框）
@@ -120,6 +121,9 @@ struct AppState {
     std::atomic<int> espDrawn{0};
     std::atomic<int> espTeamFiltered{0};
     std::atomic<int> espDistanceFiltered{0};
+
+    // 1 = 请求切换面板显隐（Features 线程检测热键，主线程消费后清零）。
+    std::atomic<int> panelToggle{0};
 };
 
 }  // namespace wv

@@ -74,6 +74,7 @@ private:
     QCheckBox* espOffscreen_{nullptr};
     QCheckBox* espEnemyList_{nullptr};
     QSpinBox* espEnemyListMax_{nullptr};
+    QCheckBox* espHeight_{nullptr};
     QCheckBox* espTrail_{nullptr};
     QSpinBox* espTrailMs_{nullptr};
     QCheckBox* espHighlight_{nullptr};

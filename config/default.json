@@ -95,6 +95,7 @@
     "offscreen": false,
     "enemyList": false,
     "enemyListMax": 5,
+    "heightIndicator": false,
     "trail": false,
     "trailMs": 220,
     "highlight": false,

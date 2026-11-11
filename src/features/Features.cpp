@@ -15,6 +15,8 @@
 namespace wv {
 namespace {
 constexpr int kLoopIntervalMs = 1;
+// F8：显隐控制面板。面板被游戏盖住时不必 Alt+Tab 出去找窗口。
+constexpr int kTogglePanelKey = 0xFFC5;  // XK_F8
 
 // 诊断输出：始终追加写入 /tmp/wv_lite.log（带节流），WV_DEBUG=1 时同时写 stderr。
 // 这样无论以 sudo 还是普通用户启动，都能事后读取按键/门控/目标证据。
@@ -121,6 +123,12 @@ void Features::run() {
     }
 
     while (running_.load()) {
+        // 面板热键：只认按下沿，长按不会连续切换。放在所有早退分支之前，
+        // 这样即使没连上游戏、偏移缺失，面板也还能收起来。
+        const bool toggleHeld = keyDown(display, kTogglePanelKey);
+        if (toggleHeld && !lastTogglePanel_) state_.panelToggle.store(1);
+        lastTogglePanel_ = toggleHeld;
+
         // 物理键位映射记录：掩码变化即写一行，放在所有门控之前，
         // 这样即使游戏未被判定为前台也能拿到真实的 ButtonN。
         const unsigned int mask = pointerMask(display);

@@ -493,6 +493,15 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
     auto timer = new QTimer(this);
     timer->setInterval(400);
     connect(timer, &QTimer::timeout, this, [this] {
+        // F8：显隐面板。Features 线程检测到按下沿会置位，这里消费并清零。
+        if (state_.panelToggle.exchange(0) != 0) {
+            if (isVisible()) {
+                hide();
+            } else {
+                show();
+            }
+        }
+
         if (status_ && QDateTime::currentDateTime() >= messageUntil_) {
             status_->setText(QString::fromStdString(game_.status()));
         }
@@ -801,7 +810,8 @@ void Menu::buildUi() {
         scroll->setFrameShape(QFrame::NoFrame);
         scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         // 行表是本面板的主体：给一个下限高度，避免 QStackedWidget 按空页压缩整窗。
-        scroll->setMinimumHeight(330);
+        // 透视页已有 16 行，330 会把最后三项挤进滚动区，抬到 400 后基本一屏可见。
+        scroll->setMinimumHeight(400);
         auto* list = new QWidget(scroll);
         auto* listLayout = new QVBoxLayout(list);
         listLayout->setContentsMargins(0, 0, 6, 0);
@@ -855,6 +865,9 @@ void Menu::buildUi() {
     espEnemyListMax_->setSuffix(" 个");
     espEnemyListMax_->setValue(initial.esp.enemyListMax);
     espEnemyListMax_->setFixedWidth(70);
+
+    espHeight_ = new ToggleSwitch(this);
+    espHeight_->setChecked(initial.esp.heightIndicator);
 
     espTrail_ = new ToggleSwitch(this);
     espTrail_->setChecked(initial.esp.trail);
@@ -1009,6 +1022,7 @@ void Menu::buildUi() {
         QWidget* parent = layout->parentWidget();
         layout->addWidget(paramRow("最多显示", espEnemyListMax_, parent));
     }));
+    espLayout->addWidget(makeRow(espHeight_, "高度差", ""));
     espLayout->addStretch(1);
 
     // ---- 页二：自瞄 ----
@@ -1127,6 +1141,7 @@ void Menu::apply() {
     next.esp.offscreen = espOffscreen_->isChecked();
     next.esp.enemyList = espEnemyList_->isChecked();
     next.esp.enemyListMax = espEnemyListMax_->value();
+    next.esp.heightIndicator = espHeight_->isChecked();
     next.esp.trail = espTrail_->isChecked();
     next.esp.trailMs = espTrailMs_->value();
     next.esp.highlight = espHighlight_->isChecked();
@@ -1240,6 +1255,7 @@ void Menu::syncFrom(const Config& config) {
     espOffscreen_->setChecked(config.esp.offscreen);
     espEnemyList_->setChecked(config.esp.enemyList);
     espEnemyListMax_->setValue(config.esp.enemyListMax);
+    espHeight_->setChecked(config.esp.heightIndicator);
     espTrail_->setChecked(config.esp.trail);
     espTrailMs_->setValue(config.esp.trailMs);
     espHighlight_->setChecked(config.esp.highlight);

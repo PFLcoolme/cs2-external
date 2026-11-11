@@ -200,6 +200,8 @@ Config Config::load(const std::string& path) {
         cfg.esp.offscreen = o.value("offscreen").toBool(cfg.esp.offscreen);
         cfg.esp.enemyList = o.value("enemyList").toBool(cfg.esp.enemyList);
         cfg.esp.enemyListMax = asInt(o, "enemyListMax", cfg.esp.enemyListMax);
+        cfg.esp.heightIndicator =
+            o.value("heightIndicator").toBool(cfg.esp.heightIndicator);
         cfg.esp.trail = o.value("trail").toBool(cfg.esp.trail);
         cfg.esp.trailMs = asInt(o, "trailMs", cfg.esp.trailMs);
         cfg.esp.highlight = o.value("highlight").toBool(cfg.esp.highlight);
@@ -282,6 +284,7 @@ void Config::save(const std::string& path) const {
     espObj["offscreen"] = esp.offscreen;
     espObj["enemyList"] = esp.enemyList;
     espObj["enemyListMax"] = esp.enemyListMax;
+    espObj["heightIndicator"] = esp.heightIndicator;
     espObj["trail"] = esp.trail;
     espObj["trailMs"] = esp.trailMs;
     espObj["highlight"] = esp.highlight;
