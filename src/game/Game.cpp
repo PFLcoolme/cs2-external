@@ -29,6 +29,13 @@ bool Game::ensureAttached() {
     return memory_.attached();
 }
 
+void Game::reloadOffsets(const Offsets& offsets) {
+    offsets_ = offsets;
+    // 重新走一遍解析：模块基址可能随版本变化，特征码也要重新扫。
+    offsetsResolved_ = false;
+    clientBase_ = 0;
+}
+
 void Game::resolveOffsets() {
     const std::uintptr_t client = memory_.moduleBase(module_);
     clientBase_ = client;

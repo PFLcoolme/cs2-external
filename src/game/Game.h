@@ -44,6 +44,10 @@ public:
     bool ensureAttached();
     void update(const Vec2& screenOrigin, int width, int height);
 
+    // 运行时替换偏移：清掉已解析标记，下一次 ensureAttached 会重新解析模块基址与特征码。
+    // 调用方需保证与 update() 同线程（本项目都在主线程）。
+    void reloadOffsets(const Offsets& offsets);
+
     Snapshot snapshot() const;
     bool attached() const { return memory_.attached(); }
     int pid() const { return memory_.pid(); }

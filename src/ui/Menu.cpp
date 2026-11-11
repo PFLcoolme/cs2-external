@@ -355,6 +355,15 @@ QComboBox* posCombo(QWidget* parent, int value) {
     return combo;
 }
 
+// 只比较核心偏移字段：面板改样式参数也会走 persist，不能每次都触发特征码重扫。
+bool sameOffsets(const Offsets& a, const Offsets& b) {
+    return a.dwEntityList == b.dwEntityList && a.dwLocalPlayerPawn == b.dwLocalPlayerPawn &&
+           a.dwViewMatrix == b.dwViewMatrix && a.m_iHealth == b.m_iHealth &&
+           a.m_pGameSceneNode == b.m_pGameSceneNode && a.m_vecAbsOrigin == b.m_vecAbsOrigin &&
+           a.m_iTeamNum == b.m_iTeamNum && a.entityChunkStride == b.entityChunkStride &&
+           a.m_modelState == b.m_modelState;
+}
+
 QLabel* fieldLabel(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text, parent);
     label->setObjectName("field");
@@ -514,6 +523,7 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
     if (!translucent_) captureBackdrop();
 
     configStamp_ = QFileInfo(QString::fromStdString(path_)).lastModified();
+    offsetsStamp_ = QFileInfo(offsetsPath()).lastModified();
 
     auto timer = new QTimer(this);
     timer->setInterval(400);
@@ -557,11 +567,31 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
         // 配置文件热重载：外部编辑（或换版本后重新生成）只要 mtime 变了就重新读取，
         // 无需重启进程。写入方是本面板时 apply() 会同步更新 configStamp_。
         const QDateTime stamp = QFileInfo(QString::fromStdString(path_)).lastModified();
-        if (!stamp.isValid() || stamp == configStamp_) return;
-        configStamp_ = stamp;
-        const Config reloaded = Config::load(path_);
-        state_.config.store(std::make_shared<Config>(reloaded));
-        syncFrom(reloaded);
+        if (stamp.isValid() && stamp != configStamp_) {
+            configStamp_ = stamp;
+            const Config reloaded = Config::load(path_);
+            const std::shared_ptr<Config> previous = state_.config.load();
+            state_.config.store(std::make_shared<Config>(reloaded));
+            // 偏移变了才重解析：特征码扫描很贵，不能每次改开关都跑一遍。
+            if (!previous || !sameOffsets(previous->offsets, reloaded.offsets)) {
+                game_.reloadOffsets(reloaded.offsets);
+            }
+            syncFrom(reloaded);
+        }
+
+        // 生成器重跑会改写 config/offsets.json：重新导入并替换，免重启进程。
+        const QDateTime offsetsFileStamp = QFileInfo(offsetsPath()).lastModified();
+        if (offsetsFileStamp.isValid() && offsetsFileStamp != offsetsStamp_) {
+            offsetsStamp_ = offsetsFileStamp;
+            const Config refreshed = Config::load(path_);
+            state_.config.store(std::make_shared<Config>(refreshed));
+            game_.reloadOffsets(refreshed.offsets);
+            syncFrom(refreshed);
+            if (status_) {
+                status_->setText("偏移已重载，无需重启");
+                messageUntil_ = QDateTime::currentDateTime().addSecs(3);
+            }
+        }
     });
     timer->start();
 }
@@ -1169,6 +1199,12 @@ void Menu::buildUi() {
     }
 }
 
+QString Menu::offsetsPath() const {
+    // path_ 形如 <dir>/config.json，配置里的 offsetsFile 是相对路径 config/offsets.json。
+    const QFileInfo configFile(QString::fromStdString(path_));
+    return configFile.absolutePath() + "/config/offsets.json";
+}
+
 void Menu::armPersist() {
     // 回填控件期间不落盘，否则热重载会把自己刚读到的值再写回去。
     if (syncing_) return;
@@ -1264,10 +1300,15 @@ void Menu::persist(const Config& config, const QString& message) {
         QFile::copy(target, backup);
     }
 
+    const std::shared_ptr<Config> previous = state_.config.load();
+    const bool offsetsChanged = !previous || !sameOffsets(previous->offsets, config.offsets);
+
     config.save(path_);
     state_.config.store(std::make_shared<Config>(config));
     // 自己写盘后同步时间戳，避免热重载把刚刚保存的配置再读一遍。
     configStamp_ = QFileInfo(target).lastModified();
+    // 偏移有变化才重解析：特征码扫描很贵，改开关不该触发。
+    if (offsetsChanged) game_.reloadOffsets(config.offsets);
 
     if (status_) status_->setText(message);
     messageUntil_ = QDateTime::currentDateTime().addSecs(4);

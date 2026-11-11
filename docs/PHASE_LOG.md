@@ -1194,3 +1194,33 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 2. 四角摆位用的是固定边距，超宽屏/带鱼屏下视觉比例会变化。
 3. 左上/右上让出了 88 px 顶部空间，若将来 HUD 增删元素需同步调整。
 4. 雷达与敌人列表可以选到同一角，两者不互斥会重叠。
+
+---
+
+# 阶段三十三：偏移热更新
+
+## 1. 需求
+
+`Game` 构造时按值拷贝 offsets，换偏移（重跑生成器 / 手改配置）必须重启进程，是本项目最后一个「改完要重启」的配置项。
+
+## 2. 实现
+
+- `Game::reloadOffsets(const Offsets&)`：替换 `offsets_`，清空 `offsetsResolved_` 与 `clientBase_`，下一次 `ensureAttached()` 会重走模块基址与特征码解析。
+- 面板 400 ms 轮询里新增两处检测：
+  - `config.json` mtime 变化 → 重新 `Config::load()`，**仅在核心偏移变化时**调用 `reloadOffsets`；
+  - `config/offsets.json` mtime 变化 → 重新导入并强制 `reloadOffsets`，状态栏提示「偏移已重载，无需重启」。
+- `sameOffsets()` 只比较九个核心字段（实体列表 / 本地玩家 / 视图矩阵 / 生命 / 场景节点 / 原点 / 队伍 / 槽位步长 / 模型状态），避免改个开关就触发一次全模块特征码扫描。
+- `Menu::persist()` 在写盘后按同样规则决定是否重解析。
+
+## 3. 验证结果
+
+- `cmake --build build -j` 0 warning / 0 error。
+- 外部改 `config.json` 的 `radarRange` 后程序保持存活，热重载链路正常（无崩溃、无重复写盘）。
+- **未验证**：`offsets.json` 触发的重载。该文件属主是 `root`（生成器用 sudo 跑过），普通用户 `touch` 不了，无法在测试环境制造 mtime 变化。
+
+## 4. 遗留风险
+
+1. `offsets.json` 与 `config.json` 同一次改动可能触发两轮重载（两个 mtime 各变一次）。
+2. `reloadOffsets` 只在本进程内替换，不会回写 `config.json`；下次启动仍以文件内容为准。
+3. 偏移替换后若新偏移无效，`update()` 会在 `resolveOffsets` 里把状态改成「未找到模块 / 偏移缺失」，但面板不会回滚到上一份可用偏移。
+4. `sameOffsets` 是字段白名单，将来新增核心偏移必须同步补进比较，否则会漏掉重扫。

@@ -146,6 +146,9 @@ private:
 
     QPoint dragOffset_;
     QDateTime configStamp_;  // 配置文件最后修改时间，用于热重载比对
+    // config/offsets.json 的修改时间：生成器重跑后自动重载偏移，不必重启进程。
+    QDateTime offsetsStamp_;
+    QString offsetsPath() const;
     // 保存/恢复提示的驻留截止时间：状态行默认每 400 ms 被连接状态覆盖，
     // 提示信息需要压过这个轮询，否则用户根本看不到「已保存」或偏移缺失警告。
     QDateTime messageUntil_;
