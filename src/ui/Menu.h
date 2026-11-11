@@ -127,6 +127,9 @@ private:
     QLabel* status_{nullptr};
     // 叠加层每帧的采集/绘制/过滤计数：区分「没敌人」和「被过滤」。
     QLabel* stats_{nullptr};
+    // 自检结果：逐项列出偏移与运行时指针是否可用。
+    QLabel* diag_{nullptr};
+    int diagTick_{0};
 
     // 参数改动后 400 ms 自动落盘，避免「改完忘了保存」。
     QTimer* persistTimer_{nullptr};

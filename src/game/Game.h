@@ -36,10 +36,21 @@ struct Snapshot {
     std::vector<PlayerInfo> players;
 };
 
+// 自检条目：逐项列出关键偏移与运行时指针是否可用。
+struct DiagItem {
+    std::string name;
+    bool ok{false};
+    std::string detail;
+};
+
 // 采集游戏状态，产出与渲染/输入无关的纯数据快照。
 class Game {
 public:
     Game(Offsets offsets, std::string process, std::string module);
+
+    // 逐项自检：偏移是否非零、模块基址与关键指针是否读得到。
+    // 面板据此给出「缺什么」，不必再去翻日志。
+    std::vector<DiagItem> diagnose() const;
 
     bool ensureAttached();
     void update(const Vec2& screenOrigin, int width, int height);

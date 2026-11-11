@@ -90,6 +90,46 @@ void Game::resolveOffsets() {
     }
 }
 
+std::vector<DiagItem> Game::diagnose() const {
+    std::vector<DiagItem> items;
+    const auto hex = [](std::uintptr_t value) {
+        std::ostringstream out;
+        out << "0x" << std::hex << value;
+        return out.str();
+    };
+
+    if (!memory_.attached()) {
+        items.push_back({"进程 " + process_, false, "未连接"});
+        return items;
+    }
+    items.push_back({"进程 " + process_, true, "pid=" + std::to_string(memory_.pid())});
+
+    const std::uintptr_t base = clientBase_;
+    items.push_back({"模块 " + module_, base != 0, base != 0 ? hex(base) : "未找到"});
+    if (base == 0) return items;
+
+    const auto checkOffset = [&](const char* name, std::uintptr_t value) {
+        items.push_back({name, value != 0, value != 0 ? hex(value) : "缺失"});
+    };
+    checkOffset("dwEntityList", offsets_.dwEntityList);
+    checkOffset("dwLocalPlayerPawn", offsets_.dwLocalPlayerPawn);
+    checkOffset("dwViewMatrix", offsets_.dwViewMatrix);
+    checkOffset("m_iHealth", static_cast<std::uintptr_t>(offsets_.m_iHealth));
+    checkOffset("m_iTeamNum", static_cast<std::uintptr_t>(offsets_.m_iTeamNum));
+    checkOffset("m_ArmorValue", static_cast<std::uintptr_t>(offsets_.m_ArmorValue));
+    checkOffset("m_pGameSceneNode", static_cast<std::uintptr_t>(offsets_.m_pGameSceneNode));
+    checkOffset("m_vecAbsOrigin", static_cast<std::uintptr_t>(offsets_.m_vecAbsOrigin));
+    checkOffset("m_modelState", static_cast<std::uintptr_t>(offsets_.m_modelState));
+
+    // 运行时指针：偏移非零却读出 0，基本就是偏移与当前版本不匹配。
+    const std::uintptr_t list = memory_.read<std::uintptr_t>(base + offsets_.dwEntityList, 0);
+    const std::uintptr_t local = memory_.read<std::uintptr_t>(base + offsets_.dwLocalPlayerPawn, 0);
+    items.push_back({"实体列表指针", list != 0, list != 0 ? hex(list) : "读到 0，偏移可能已失效"});
+    items.push_back({"本地玩家指针", local != 0, local != 0 ? hex(local) : "读到 0，偏移可能已失效"});
+
+    return items;
+}
+
 std::uintptr_t Game::clientBase() const { return clientBase_; }
 
 Vec3 Game::bonePosition(std::uintptr_t sceneNode, int boneIndex) const {

@@ -91,6 +91,11 @@ QLabel#stats {
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 10px;
 }
+QLabel#diag {
+    color: #4B5563;
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 9.5px;
+}
 QLabel#hint { color: #71787F; font-size: 10px; }
 QLabel#warn { color: #101417; font-size: 10px; font-weight: 700; }
 QWidget#row { border-radius: 6px; }
@@ -558,6 +563,22 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
                                     .arg(state_.espHits.load())
                                     .arg(state_.espDamage.load()));
             }
+        }
+
+        // 自检每 2 秒刷新一次：重建 HTML 有开销，不必跟着 400 ms 轮询跑。
+        if (diag_ && ++diagTick_ % 5 == 0) {
+            QString html;
+            for (const DiagItem& item : game_.diagnose()) {
+                // 一次性四参数替换，避免链式 arg 在富文本里错位；
+                // 用 OK / -- 而非勾叉，规避等宽字体缺符号时的回退。
+                html += QStringLiteral("<span style='color:%1'>%2</span> %3  "
+                                       "<span style='color:#6B7280'>%4</span><br>")
+                            .arg(item.ok ? QStringLiteral("#2E7D32") : QStringLiteral("#B91C1C"),
+                                 item.ok ? QStringLiteral("OK") : QStringLiteral("--"),
+                                 QString::fromStdString(item.name),
+                                 QString::fromStdString(item.detail));
+            }
+            diag_->setText(html.isEmpty() ? QStringLiteral("（无数据）") : html);
         }
 
         // 日志区可见时才读文件，滚出视野后零开销。
@@ -1145,7 +1166,15 @@ void Menu::buildUi() {
     // 全局快捷键放在日志页顶部：这页空间充裕，且不属于任何单个功能。
     logLayout->addWidget(paramRow("面板显隐键", togglePanelKey_, this));
     logLayout->addWidget(paramRow("一键静默键", panicKey_, this));
-    logLayout->addSpacing(10);
+    logLayout->addSpacing(6);
+
+    // 自检区：偏移与运行时指针逐项列出，缺哪个一眼可见。
+    diag_ = new QLabel(this);
+    diag_->setObjectName("diag");
+    diag_->setTextFormat(Qt::RichText);
+    diag_->setText("（等待连接…）");
+    logLayout->addWidget(diag_);
+    logLayout->addSpacing(8);
 
     logView_ = new QPlainTextEdit(this);
     logView_->setObjectName("log");
