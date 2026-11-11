@@ -1,6 +1,7 @@
 #pragma once
 #include <QDateTime>
-#include <QHash>
+#include <QImage>
+#include <QPixmap>
 #include <QPoint>
 #include <QWidget>
 
@@ -14,6 +15,7 @@ class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
+class QMoveEvent;
 class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
@@ -34,17 +36,15 @@ protected:
     void showEvent(QShowEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
-    // 参数弹层关闭时落盘：右键调完参数松手即生效，不需要再点保存。
-    bool eventFilter(QObject* watched, QEvent* event) override;
+    // 拖动会改变窗口在屏幕上的位置，毛玻璃背景要跟着重新裁剪。
+    void moveEvent(QMoveEvent* event) override;
 
 private:
     void buildUi();
-    // 单行 = 一个功能：开关 + 名称 + 右侧「右键」提示。
-    QWidget* makeRow(QCheckBox* toggle, const QString& name, const QString& hint);
-    // 给某一行挂上参数弹层；build 只在第一次右键时调用。
-    void attachParams(QWidget* row, QCheckBox* toggle, const QString& title,
-                      const std::function<void(QVBoxLayout*)>& build);
-    QWidget* ensurePopup(const QString& title);
+    // 单行 = 一个功能：开关 + 名称 + 右侧「参数」入口。
+    // build 非空时，参数控件就地展开在该行下方（下拉式），不再另开浮窗。
+    QWidget* makeRow(QCheckBox* toggle, const QString& name, const QString& hint,
+                     const std::function<void(QVBoxLayout*)>& build = {});
     void apply();
     // 恢复上一次保存的配置（config.json.bak），可与当前配置来回切换。
     void restoreLast();
@@ -66,7 +66,9 @@ private:
     QCheckBox* espDistance_{nullptr};
     QCheckBox* espSkeleton_{nullptr};
     QCheckBox* espRadar_{nullptr};
+    QCheckBox* espRadarRotate_{nullptr};
     QSpinBox* espRadarRange_{nullptr};
+    QCheckBox* espOffscreen_{nullptr};
     QCheckBox* espTrail_{nullptr};
     QSpinBox* espTrailMs_{nullptr};
     QCheckBox* espHighlight_{nullptr};
@@ -113,9 +115,15 @@ private:
     QPushButton* tabs_[4]{};
     QStackedWidget* pages_{nullptr};
 
-    // 参数弹层：按标题缓存已建好的弹层与该弹层的构造器。
-    QHash<QString, QWidget*> popups_;
-    QHash<QString, std::function<void(QVBoxLayout*)>> popupBuilders_;
+    // 有合成器时走 ARGB 半透明窗口，背景由合成器实时模糊，能跟随画面变化；
+    // 没有合成器才退回「全屏快照 + 自模糊」，那套是静态的，只为兜底。
+    bool translucent_{false};
+
+    QImage backdrop_;
+    QPixmap backdropBlurred_;
+    bool backdropDirty_{true};
+    void captureBackdrop();
+    void rebuildBackdrop();
 
     QPoint dragOffset_;
     QDateTime configStamp_;  // 配置文件最后修改时间，用于热重载比对

@@ -4,6 +4,7 @@
 #include <QGuiApplication>
 #include <QPainter>
 #include <QPen>
+#include <QPolygonF>
 #include <QScreen>
 #include <QString>
 
@@ -28,6 +29,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <vector>
 
 namespace wv {
@@ -39,6 +41,50 @@ constexpr int kOverlayIntervalMs = 5;
 constexpr int kRaiseEveryTicks = 6;
 constexpr int kWindowProbeTicks = 10;
 const bool kDebugTrace = std::getenv("WV_DEBUG") != nullptr;
+
+// 从视图矩阵左上 3x3 推导相机朝向角（世界系 yaw，弧度）。
+// 项目采用行主序 + 行向量右乘，相机 forward 等于第三行取反（相机看向 -Z）。
+// 旋转行的长度应接近 1；不接近说明矩阵布局假设不成立，返回 NaN 让调用方回退。
+float viewYaw(const Mat4& view) {
+    const float r0 = view.m[2][0];
+    const float r1 = view.m[2][1];
+    const float r2 = view.m[2][2];
+    const float rowLen = std::sqrt(r0 * r0 + r1 * r1 + r2 * r2);
+    if (!std::isfinite(rowLen) || std::fabs(rowLen - 1.f) > 0.05f) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    const float fx = -r0;
+    const float fy = -r1;
+    if (std::fabs(fx) < 1e-6f && std::fabs(fy) < 1e-6f) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    return std::atan2(fy, fx);
+}
+
+// 目标相对屏幕中心的方向（单位向量），用于屏幕外指示。
+// w < 0 表示目标在相机背后，此时 NDC 会翻转，取反才能得到真实方位。
+bool screenDirection(const Vec3& world, const Mat4& view, float& dx, float& dy) {
+    const float w = world.x * view.m[3][0] + world.y * view.m[3][1] +
+                    world.z * view.m[3][2] + view.m[3][3];
+    if (!std::isfinite(w) || std::fabs(w) < 1e-4f) return false;
+
+    const float x = world.x * view.m[0][0] + world.y * view.m[0][1] +
+                    world.z * view.m[0][2] + view.m[0][3];
+    const float y = world.x * view.m[1][0] + world.y * view.m[1][1] +
+                    world.z * view.m[1][2] + view.m[1][3];
+
+    dx = x / w;
+    dy = -y / w;  // NDC 的 +y 向上，屏幕 +y 向下
+    if (w < 0.f) {
+        dx = -dx;
+        dy = -dy;
+    }
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 1e-5f) return false;
+    dx /= len;
+    dy /= len;
+    return true;
+}
 
 long windowPid(Display* display, Window window) {
     Atom atom = XInternAtom(display, "_NET_WM_PID", False);
@@ -172,8 +218,18 @@ void Overlay::tick() {
     // 诊断开关：WV_DEBUG=1 时每 60 tick 输出一次采集/绘制状态。
     if (kDebugTrace && ++traceTick_ % 60 == 0) {
         const Snapshot s = game_.snapshot();
-        std::fprintf(stderr, "[tick] %dx%d valid=%d players=%zu drawn=%d\n", windowWidth_,
-                     windowHeight_, s.valid ? 1 : 0, s.players.size(), drawnCount_);
+        std::fprintf(stderr, "[tick] %dx%d valid=%d players=%zu drawn=%d localTeam=%d\n",
+                     windowWidth_, windowHeight_, s.valid ? 1 : 0, s.players.size(), drawnCount_,
+                     s.localTeam);
+        // 逐玩家输出：队伍/血量/距离/投影坐标。feet 为 (0,0) 说明投影失败，
+        // 配合 [yaw] 可直接判断是过滤问题还是矩阵问题。
+        for (const PlayerInfo& p : s.players) {
+            std::fprintf(stderr, "  [p] idx=%d team=%d hp=%d dist=%.1f feet=(%.0f,%.0f)\n", p.index,
+                         p.team, p.health, p.distance, p.feetScreen.x, p.feetScreen.y);
+        }
+        const float yaw = viewYaw(s.view);
+        std::fprintf(stderr, "  [yaw] finite=%d value=%.3f\n", std::isfinite(yaw) ? 1 : 0,
+                     std::isfinite(yaw) ? yaw : 0.f);
     }
 
     if (tickCount_ % kRaiseEveryTicks == 0) {
@@ -428,8 +484,60 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         }
     }
 
-    // ---- 2D 雷达：固定北向，底部居中。世界 +X 向右、+Y 向上，
-    // 屏幕 y 轴向下因此取负号；半径按 radarRange 米线性映射。 ----
+    // ---- 屏外指示：视野外的敌人在屏幕边缘画箭头指向真实方位 ----
+    if (config->esp.offscreen) {
+        const float cx = static_cast<float>(width()) * 0.5f;
+        const float cy = static_cast<float>(height()) * 0.5f;
+        const float margin = 46.f;
+        const float halfW = cx - margin;
+        const float halfH = cy - margin;
+
+        for (const PlayerInfo& player : snapshot.players) {
+            if (player.health <= 0) continue;
+            if (config->esp.teamCheck && player.team == snapshot.localTeam) continue;
+            if (maxDistance > 0.f && player.distance > maxDistance) continue;
+
+            // 已经在画面内（且离边缘够远）的目标由方框负责，不重复标注。
+            Vec2 screen;
+            const bool projected = worldToScreen(player.head, snapshot.view, Vec2{0.f, 0.f},
+                                                 width(), height(), screen);
+            if (projected && screen.x > margin && screen.x < width() - margin &&
+                screen.y > margin && screen.y < height() - margin) {
+                continue;
+            }
+
+            float dx = 0.f;
+            float dy = 0.f;
+            if (!screenDirection(player.head, snapshot.view, dx, dy)) continue;
+
+            // 从屏幕中心沿该方向投射到留了边距的矩形边界上。
+            const float tx = std::fabs(dx) > 1e-4f ? halfW / std::fabs(dx) : 1e9f;
+            const float ty = std::fabs(dy) > 1e-4f ? halfH / std::fabs(dy) : 1e9f;
+            const float t = std::min(tx, ty);
+            const QPointF tip(cx + dx * t, cy + dy * t);
+
+            // 三角形：尖朝屏幕外，底边收回内侧。
+            const float angle = std::atan2(dy, dx);
+            const float size = 11.f;
+            const float spread = 0.42f;
+            QPolygonF arrow;
+            arrow << tip
+                  << QPointF(tip.x() - std::cos(angle - spread) * size,
+                             tip.y() - std::sin(angle - spread) * size)
+                  << QPointF(tip.x() - std::cos(angle + spread) * size,
+                             tip.y() - std::sin(angle + spread) * size);
+
+            QColor color = player.team == 2 ? QColor(230, 162, 60) : QColor(74, 144, 226);
+            color.setAlpha(static_cast<int>(std::lround(210.f * distanceFade(player.distance))));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            painter.drawPolygon(arrow);
+            painter.setBrush(Qt::NoBrush);
+        }
+    }
+
+    // ---- 2D 雷达：底部居中。开启旋转时「自己的朝向」恒在正上方；
+    // 关闭时固定北向（世界 +X 向右、+Y 向上）。 ----
     if (config->esp.radar) {
         const float radius = 92.f;
         const QPointF center(static_cast<float>(width()) * 0.5f,
@@ -445,20 +553,45 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         painter.drawLine(QPointF(center.x(), center.y() - radius),
                          QPointF(center.x(), center.y() + radius));
 
+        // 朝向角：矩阵布局不符时 viewYaw 返回 NaN，这里自动退回固定北向，
+        // 不至于把整块雷达旋歪。
+        const float yaw = viewYaw(snapshot.view);
+        const bool rotate = config->esp.radarRotate && std::isfinite(yaw);
+
+        if (rotate) {
+            // 顶部小三角：标记「这里是你的正前方」。
+            QPolygonF heading;
+            heading << QPointF(center.x(), center.y() - radius - 7.0)
+                    << QPointF(center.x() - 5.0, center.y() - radius + 3.0)
+                    << QPointF(center.x() + 5.0, center.y() - radius + 3.0);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(230, 162, 60, 150));
+            painter.drawPolygon(heading);
+            painter.setBrush(Qt::NoBrush);
+        }
+
         const float range = std::max(5.f, config->esp.radarRange);
         for (const PlayerInfo& player : snapshot.players) {
             if (maxDistance > 0.f && player.distance > maxDistance) continue;
             if (player.distance > range) continue;
 
-            float dx = player.origin.x - snapshot.localOrigin.x;
-            float dy = player.origin.y - snapshot.localOrigin.y;
-            if (dx == 0.f && dy == 0.f) continue;
-            const float length = std::sqrt(dx * dx + dy * dy);
-            dx /= length;
-            dy /= length;
-
+            const float dx = player.origin.x - snapshot.localOrigin.x;
+            const float dy = player.origin.y - snapshot.localOrigin.y;
             const float scaled = radius * (player.distance / range);
-            const QPointF dot(center.x() + dx * scaled, center.y() - dy * scaled);
+            if (scaled <= 0.f || (dx == 0.f && dy == 0.f)) continue;
+
+            QPointF dot;
+            if (rotate) {
+                // 世界方位角减去朝向角，得到「前方朝上」的局部坐标。
+                const float rel = std::atan2(dy, dx) - yaw;
+                dot = QPointF(center.x() - std::sin(rel) * scaled,
+                              center.y() - std::cos(rel) * scaled);
+            } else {
+                const float length = std::sqrt(dx * dx + dy * dy);
+                dot = QPointF(center.x() + dx / length * scaled,
+                              center.y() - dy / length * scaled);
+            }
+
             painter.setPen(Qt::NoPen);
             painter.setBrush(player.team == 2 ? QColor(230, 162, 60) : QColor(74, 144, 226));
             painter.drawEllipse(dot, 3.0, 3.0);

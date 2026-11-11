@@ -194,8 +194,10 @@ Config Config::load(const std::string& path) {
         cfg.esp.distance = o.value("distance").toBool(cfg.esp.distance);
         cfg.esp.skeleton = o.value("skeleton").toBool(cfg.esp.skeleton);
         cfg.esp.radar = o.value("radar").toBool(cfg.esp.radar);
+        cfg.esp.radarRotate = o.value("radarRotate").toBool(cfg.esp.radarRotate);
         cfg.esp.radarRange =
             static_cast<float>(o.value("radarRange").toDouble(cfg.esp.radarRange));
+        cfg.esp.offscreen = o.value("offscreen").toBool(cfg.esp.offscreen);
         cfg.esp.trail = o.value("trail").toBool(cfg.esp.trail);
         cfg.esp.trailMs = asInt(o, "trailMs", cfg.esp.trailMs);
         cfg.esp.highlight = o.value("highlight").toBool(cfg.esp.highlight);
@@ -273,7 +275,9 @@ void Config::save(const std::string& path) const {
     espObj["distance"] = esp.distance;
     espObj["skeleton"] = esp.skeleton;
     espObj["radar"] = esp.radar;
+    espObj["radarRotate"] = esp.radarRotate;
     espObj["radarRange"] = static_cast<double>(esp.radarRange);
+    espObj["offscreen"] = esp.offscreen;
     espObj["trail"] = esp.trail;
     espObj["trailMs"] = esp.trailMs;
     espObj["highlight"] = esp.highlight;

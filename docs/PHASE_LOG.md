@@ -996,3 +996,43 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 1. 不透明底板：无合成器环境下这是唯一稳的画法，玻璃质感丢失。
 2. `paramHolder` 只做托管，不在布局里；若将来把参数控件直接放进页面，需要改回正常父子关系。
 3. 行表贴近 330 px 下限的问题未变，再加行仍会出现竖向滚动。
+
+---
+
+# 阶段二十七：左侧分类面板 + iOS 开关 + 毛玻璃 + 行内下拉参数 + 雷达旋转/屏外指示
+
+## 1. 需求
+
+1. 顶部横排类别改为左侧分类列表。
+2. 方框勾选框改为 iOS 形制开关。
+3. 面板背景做半透明毛玻璃，并随背景画面变化。
+4. 参数从独立弹窗改为行内下拉展开。
+5. 雷达随视角旋转；视野外敌人在屏幕边缘显示方位箭头。
+
+## 2. 实现
+
+- `src/ui/Menu.cpp` 主体布局：`body` 横向两列，左列 `navColumn`（固定 92 px）竖排四个类别按钮，右列 `content` 承载 `QStackedWidget`；窗口宽 440 → 540。
+- 侧栏样式挂在按钮自身 `kNavStyle`：ID 选择器配 `:checked` 时 Qt 会回退原生绘制（选中变系统高亮蓝），必须用内联样式表。
+- 新增 `ToggleSwitch : QCheckBox`：34×18 轨道 + 14 px 滑块，`QVariantAnimation` 140 ms `OutCubic` 过渡，`paintEvent` 全自绘，保留 `isChecked/setChecked` 语义，22 个开关零改动替换。
+- 毛玻璃两条路径：`compositorRunning()` 探测 `_NET_WM_CM_S0`；有合成器走 ARGB 半透明（背景实时跟随），无合成器退回「全屏快照 + 降采样模糊」。透明底板 `kGlassAlpha = 188`（近白 `252,253,254`），噪点 alpha 2，描边 `rgba(0,0,0,30)`。
+- 参数改为行内展开：`makeRow(toggle, name, hint, build)` 返回「功能行 + 隐藏参数卡」单元，点击右侧「参数 ▸」或右键行切换，收起时 `apply()` 落盘。删除 `ensurePopup/attachParams/popups_/popupBuilders_/eventFilter/paramHolder`。
+- `src/render/Overlay.cpp` 新增 `viewYaw()`：视图矩阵第三行取反得相机 forward，`atan2` 得 yaw，先做行长度≈1 的正交性自检，不符返回 NaN 由调用方回退固定北向。
+- 雷达：`radarRotate` 为真且 yaw 有效时按 `rel = atan2(dy,dx) - yaw` 映射「前方朝上」，圆周顶部画朝向三角。
+- 新增 `screenDirection()`：目标相对屏幕中心的方向单位向量，`w < 0`（相机后方）取反。
+- 屏外指示：`esp.offscreen` 开启时，画面外敌人在留 46 px 边距的矩形边缘画指向箭头，颜色沿用敌我语义色，透明度按距离衰减。
+- 配置：`EspConfig` 新增 `radarRotate{true}` / `offscreen{false}`，`Config.cpp` 读写，`config/default.json` 同步。
+
+## 3. 验证结果
+
+- 构建：`cmake --build build -j` 成功，0 warning / 0 error。
+- 面板：截图 `/tmp/n1c.png` 确认左侧分类列表、iOS 开关、白色玻璃底、「屏外指示」行；`/tmp/s3c.png` 确认参数行内展开（显示时长 / 颜色），「残影轨迹」紧随其后。
+- 导航选中态：`/tmp/nav4.png` 由系统蓝改为浅灰底 + 白字。
+- 毛玻璃：`/tmp/panel_smooth2.png` 白色底板平滑；`/tmp/panel_b.png` 证明 ARGB 路径下背景实时透出。
+- **未验证**：雷达旋转跟随与屏外箭头的实际方位。当前无 CS2 进程，`Snapshot` 为空，叠加层不产生绘制。
+
+## 4. 遗留风险
+
+1. yaw 依赖「行主序 + 行向量右乘」的矩阵假设；实机若旋转方向相反，对调 `rel` 的符号或 `sin/cos` 组合即可。
+2. 屏外箭头用 head 投影判定，头部接近相机平面时 NDC 不稳定，极小角度下可能有抖动。
+3. 雷达半径按水平距离映射，高低差大的地形存在偏差。
+4. 无合成器会话只出静态快照模糊，背景不跟随画面。

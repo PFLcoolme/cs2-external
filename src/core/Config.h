@@ -73,8 +73,10 @@ struct EspConfig {
     bool damageNumbers{false};  // 血量掉血浮字
     bool distance{true};
     bool skeleton{false};
-    bool radar{false};  // 2D 雷达（固定北向，底部居中）
+    bool radar{false};  // 2D 雷达（底部居中）
+    bool radarRotate{true};  // 雷达随视角旋转（false = 固定北向）
     float radarRange{40.f};  // 雷达半径对应的世界距离（米）
+    bool offscreen{false};   // 视野外敌人：屏幕边缘画箭头指方位
     bool trail{false};       // 残影轨迹：脚底屏幕坐标的历史折线
     int trailMs{220};        // 轨迹保留时长（毫秒）
     bool highlight{false};   // 最低血量目标描边（准星目标仍用白框）

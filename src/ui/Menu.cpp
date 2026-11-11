@@ -5,9 +5,11 @@
 #include <QCoreApplication>
 #include <QCursor>
 #include <QDoubleSpinBox>
+#include <QEasingCurve>
 #include <QEvent>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontMetrics>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGuiApplication>
@@ -15,12 +17,15 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLinearGradient>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QRegion>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QScreen>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -28,74 +33,83 @@
 #include <QStackedWidget>
 #include <QStringList>
 #include <QTimer>
+#include <QVariantAnimation>
 #include <QVBoxLayout>
+
+#include <QMoveEvent>
+
+#include <X11/Xatom.h>
+#include <X11/Xlib.h>
+
+// X11 与 Qt 的符号冲突：Qt 头文件已在上方解析完毕，这里解除宏污染。
+#undef None
+#undef Bool
+#undef Status
+#undef CursorShape
+#undef KeyPress
+#undef KeyRelease
+#undef FocusIn
+#undef FocusOut
+#undef FontChange
+#undef Expose
 
 #include <algorithm>
 
 namespace wv {
 namespace {
 
+// 玻璃底板的不透明度（0-255）：越低背后画面透出越明显，深色文字的对比度也越低。
+// 188 让面板接近雾面白玻璃：背景仍有变化感，但穿透的细节已经淡到不干扰阅读。
+constexpr int kGlassAlpha = 188;
+
 // 面板视觉：无边框半透明玻璃底板（paintEvent 绘制）+ 极简控件。
-// 黑白双色：勾选态与主按钮用白，其余全部走中性灰阶，不使用任何彩色强调。
+// 浅色玻璃：底板用近白，文字与线条走深灰；只有描边和阴影压一点灰度，不用彩色强调。
 const char* kStyle = R"QSS(
 QWidget {
     background: transparent;
-    color: #E9EAEC;
+    color: #1F2328;
     font-family: "Noto Sans CJK SC", "Source Han Sans SC", "DejaVu Sans", sans-serif;
     font-size: 12px;
 }
 QLabel#title {
-    color: #F4F5F7;
+    color: #0E1114;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 3px;
 }
-QLabel#field { color: #C2C7CC; font-size: 11px; }
+QLabel#field { color: #4A5158; font-size: 11px; }
 QLabel#status {
-    color: #B0B6BC;
+    color: #5C636B;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 10px;
 }
-QLabel#hint { color: #9AA0A6; font-size: 10px; }
-QLabel#warn { color: #F2F3F5; font-size: 10px; font-weight: 700; }
+QLabel#hint { color: #71787F; font-size: 10px; }
+QLabel#warn { color: #101417; font-size: 10px; font-weight: 700; }
 QWidget#row { border-radius: 6px; }
-QWidget#row:hover { background: rgba(255, 255, 255, 16); }
-QWidget#popup {
-    background: #16191E;
-    border: 1px solid rgba(255, 255, 255, 40);
-}
-QFrame#rule { background: rgba(255, 255, 255, 70); border: none; min-height: 1px; max-height: 1px; }
-QCheckBox { spacing: 7px; color: #E9EBEE; }
-QCheckBox:hover { color: #FFFFFF; }
-QCheckBox::indicator {
-    width: 13px;
-    height: 13px;
-    border: 1px solid rgba(255, 255, 255, 110);
-    border-radius: 4px;
-    background: transparent;
-}
-QCheckBox::indicator:hover { border-color: rgba(255, 255, 255, 170); }
-QCheckBox::indicator:checked { background: #F2F3F5; border-color: #F2F3F5; }
+QWidget#row:hover { background: rgba(0, 0, 0, 10); }
+QFrame#rule { background: rgba(0, 0, 0, 45); border: none; min-height: 1px; max-height: 1px; }
+/* 开关的轨道与滑块由 ToggleSwitch 自绘（iOS 形制），这里只保留文字色基线。 */
+QCheckBox { color: #1F2328; }
 QSpinBox, QDoubleSpinBox, QComboBox {
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 70);
+    border: 1px solid rgba(0, 0, 0, 55);
     border-radius: 6px;
     padding: 3px 7px;
     min-height: 16px;
-    color: #FFFFFF;
+    color: #14181C;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 11px;
-    selection-background-color: #EDEFF2;
-    selection-color: #0F1113;
+    selection-background-color: #1F2328;
+    selection-color: #FFFFFF;
 }
 QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover {
-    background: rgba(255, 255, 255, 26);
-    border-color: rgba(255, 255, 255, 120);
+    background: rgba(0, 0, 0, 10);
+    border-color: rgba(0, 0, 0, 110);
 }
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
-    border-color: rgba(255, 255, 255, 200);
-    background: rgba(255, 255, 255, 26);
+    border-color: rgba(0, 0, 0, 160);
+    background: rgba(0, 0, 0, 10);
 }
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
@@ -105,65 +119,54 @@ QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
 }
 QComboBox::drop-down { border: none; width: 16px; }
 QComboBox QAbstractItemView {
-    background: #14171C;
-    border: 1px solid rgba(255, 255, 255, 30);
+    background: #FFFFFF;
+    border: 1px solid rgba(0, 0, 0, 30);
     border-radius: 6px;
     padding: 4px;
     outline: none;
-    selection-background-color: rgba(255, 255, 255, 235);
-    selection-color: #0F1113;
+    selection-background-color: rgba(0, 0, 0, 220);
+    selection-color: #FFFFFF;
 }
 QPushButton#apply {
     background: transparent;
-    color: #F2F3F5;
-    border: 1px solid rgba(255, 255, 255, 90);
+    color: #14181C;
+    border: 1px solid rgba(0, 0, 0, 80);
     border-radius: 8px;
     padding: 8px 12px;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 3px;
 }
-QPushButton#apply:hover { background: rgba(255, 255, 255, 235); color: #0F1113; border-color: transparent; }
+QPushButton#apply:hover { background: #14181C; color: #FFFFFF; border-color: transparent; }
 QPushButton#restore {
     background: transparent;
-    color: #A8AEB5;
-    border: 1px solid rgba(255, 255, 255, 50);
+    color: #5A6169;
+    border: 1px solid rgba(0, 0, 0, 45);
     border-radius: 8px;
     padding: 8px 10px;
     font-size: 11px;
     letter-spacing: 2px;
 }
-QPushButton#restore:hover { background: rgba(255, 255, 255, 30); color: #F2F3F5; border-color: rgba(255, 255, 255, 110); }
-QPushButton#restore:pressed { background: rgba(255, 255, 255, 70); color: #0F1113; }
-QPushButton#apply:pressed { background: rgba(255, 255, 255, 180); color: #0F1113; }
-QPushButton#tab {
-    background: rgba(255, 255, 255, 12);
-    border: 1px solid rgba(255, 255, 255, 26);
-    border-radius: 7px;
-    color: #B4B9BF;
-    font-size: 12px;
-    letter-spacing: 2px;
-    padding: 0 6px;
-}
-QPushButton#tab:hover { background: rgba(255, 255, 255, 28); color: #F2F3F5; }
-QPushButton#tab:checked { background: rgba(255, 255, 255, 235); color: #0F1113; border-color: transparent; }
+QPushButton#restore:hover { background: rgba(0, 0, 0, 12); color: #14181C; border-color: rgba(0, 0, 0, 90); }
+QPushButton#restore:pressed { background: rgba(0, 0, 0, 55); color: #FFFFFF; }
+QPushButton#apply:pressed { background: rgba(0, 0, 0, 150); color: #FFFFFF; }
 QPushButton#close {
     background: transparent;
     border: 0;
     border-radius: 9px;
-    color: #6E747B;
+    color: #70777E;
     font-size: 12px;
     padding: 0;
 }
-QPushButton#close:hover { background: rgba(255, 255, 255, 20); color: #FFFFFF; }
+QPushButton#close:hover { background: rgba(0, 0, 0, 12); color: #14181C; }
 QPlainTextEdit#log {
     background: transparent;
     border: none;
-    color: #A9AFB6;
+    color: #4E555C;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 9px;
-    selection-background-color: rgba(255, 255, 255, 235);
-    selection-color: #0F1113;
+    selection-background-color: rgba(0, 0, 0, 220);
+    selection-color: #FFFFFF;
 }
 QScrollBar:vertical {
     background: transparent;
@@ -171,13 +174,141 @@ QScrollBar:vertical {
     margin: 0;
 }
 QScrollBar::handle:vertical {
-    background: rgba(255, 255, 255, 60);
+    background: rgba(0, 0, 0, 45);
     border-radius: 2px;
     min-height: 16px;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 )QSS";
+
+// 侧栏按钮样式不走全局样式表：ID 选择器配 :checked 时 Qt 会回退到原生绘制，
+// 选中态直接变成系统高亮的蓝色。改成挂在按钮自身的样式表，优先级最高。
+const char* kNavStyle = R"QSS(
+QPushButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    color: #5C636B;
+    font-size: 12px;
+    padding: 0 10px;
+    text-align: left;
+}
+QPushButton:hover { background: rgba(0, 0, 0, 10); color: #14181C; }
+QPushButton:checked {
+    background: rgba(0, 0, 0, 16);
+    color: #101417;
+    font-weight: 700;
+}
+)QSS";
+
+// 合成器探测：_NET_WM_CM_S0 有 owner 才说明有合成器在做窗口合成。
+// 有它才能安全地开 ARGB 透明窗口（透明区由合成器补上后景）；
+// 没有的话透明区会被直接贴屏成未初始化像素。
+bool compositorRunning() {
+    Display* display = XOpenDisplay(nullptr);
+    if (!display) return false;
+    const Atom selection = XInternAtom(display, "_NET_WM_CM_S0", False);
+    // None 宏已被 #undef，XID 0 即 None。
+    const bool running = selection != 0 && XGetSelectionOwner(display, selection) != 0;
+    XCloseDisplay(display);
+    return running;
+}
+
+// 磨砂颗粒：固定种子的 128×128 二值噪声，平铺后给玻璃面一点散射质感。
+// 白底上必须用深色颗粒才看得见；alpha 压得很低（5/255），只留极细一层砂感。
+// 静态缓存，避免每次重绘都重新生成。
+QPixmap grainTexture() {
+    static const QPixmap tile = [] {
+        constexpr int kSize = 128;
+        QImage image(kSize, kSize, QImage::Format_ARGB32);
+        image.fill(Qt::transparent);
+        QRandomGenerator rng(0x9E3779B9u);
+        for (int y = 0; y < kSize; ++y) {
+            auto* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+            for (int x = 0; x < kSize; ++x) {
+                const bool dark = rng.bounded(2) == 0;
+                line[x] = dark ? qRgba(0, 0, 0, 2) : qRgba(0, 0, 0, 0);
+            }
+        }
+        return QPixmap::fromImage(image);
+    }();
+    return tile;
+}
+
+// iOS 风格开关：继承 QCheckBox 以保留 isChecked/setChecked 的全部既有调用点，
+// 只把绘制换成「圆角轨道 + 圆形滑块」，切换时 140 ms 缓动。
+// 面板是黑白双色规范，因此开启态轨道用白、滑块用深色，不引入绿色强调。
+class ToggleSwitch : public QCheckBox {
+public:
+    explicit ToggleSwitch(QWidget* parent = nullptr) : QCheckBox(parent) {
+        setCursor(Qt::PointingHandCursor);
+        knob_ = isChecked() ? 1.0 : 0.0;
+
+        anim_ = new QVariantAnimation(this);
+        anim_->setDuration(140);
+        anim_->setEasingCurve(QEasingCurve::OutCubic);
+        connect(anim_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
+            knob_ = value.toReal();
+            update();
+        });
+        connect(this, &QCheckBox::toggled, this, [this](bool checked) {
+            anim_->stop();
+            anim_->setStartValue(knob_);
+            anim_->setEndValue(checked ? 1.0 : 0.0);
+            anim_->start();
+        });
+    }
+
+    QSize sizeHint() const override {
+        const QFontMetrics metrics(font());
+        return QSize(kTrackWidth + kGap + metrics.horizontalAdvance(text()),
+                     std::max(kTrackHeight, metrics.height()));
+    }
+
+    QSize minimumSizeHint() const override { return sizeHint(); }
+
+protected:
+    void paintEvent(QPaintEvent* /*event*/) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        const qreal radius = kTrackHeight / 2.0;
+        const QRectF track(0.0, (height() - kTrackHeight) / 2.0, kTrackWidth, kTrackHeight);
+        painter.setPen(Qt::NoPen);
+        // 浅色底板：关闭是淡灰轨道，开启是近黑轨道，靠明度差表达状态。
+        painter.setBrush(blend(QColor(0, 0, 0, 38), QColor(31, 35, 40), knob_));
+        painter.drawRoundedRect(track, radius, radius);
+
+        // 滑块恒为白色：在浅色面板上由「白点压在深轨道里」形成对比。
+        const qreal knobSize = kTrackHeight - 4.0;
+        const qreal knobX = track.left() + 2.0 + knob_ * (kTrackWidth - 4.0 - knobSize);
+        painter.setBrush(QColor(255, 255, 255));
+        painter.drawEllipse(QRectF(knobX, track.top() + 2.0, knobSize, knobSize));
+
+        const QFontMetrics metrics(font());
+        const int textLeft = kTrackWidth + kGap;
+        const QRect textRect(textLeft, 0, std::max(0, width() - textLeft), height());
+        painter.setPen(isEnabled() ? QColor(31, 35, 40) : QColor(154, 160, 166));
+        painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+                         metrics.elidedText(text(), Qt::ElideRight, textRect.width()));
+    }
+
+private:
+    static QColor blend(const QColor& from, const QColor& to, qreal t) {
+        return QColor::fromRgbF(from.redF() + (to.redF() - from.redF()) * t,
+                                from.greenF() + (to.greenF() - from.greenF()) * t,
+                                from.blueF() + (to.blueF() - from.blueF()) * t,
+                                from.alphaF() + (to.alphaF() - from.alphaF()) * t);
+    }
+
+    static constexpr int kTrackWidth = 34;
+    static constexpr int kTrackHeight = 18;
+    static constexpr int kGap = 9;
+
+    QVariantAnimation* anim_{nullptr};
+    qreal knob_{0.0};
+};
 
 // 鼠标键下拉：X11 核心协议只暴露 Button1~Button5，侧键不在掩码内，
 // 因此只提供 不限 / 左键 / 中键 / 右键，避免给出按键位却读不到状态。
@@ -247,12 +378,18 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
     // 无边框 + 透明底：整块面板由 paintEvent 画成圆角玻璃，WM 不再画标题栏。
     // 无边框后没有标题栏可点回前台，必须自己置顶，否则被 IDE / 浏览器整块盖住。
     setWindowFlags(Qt::FramelessWindowHint | Qt::Window | Qt::WindowStaysOnTopHint);
-    // 不使用 WA_TranslucentBackground：本机 X 会话没有合成器（_NET_WM_CM_S0 缺失），
-    // ARGB 窗口的透明区域会被直接贴屏，显示成未初始化像素——即左上角那团糊在一起的残影。
-    // 改为不透明窗口，圆角用 XShape 遮罩裁出来。
-    setFixedWidth(440);
+    // 毛玻璃两条路径：
+    // - 有合成器：ARGB 半透明窗口，背景由 picom / KWin 实时合成，能跟随画面变化；
+    // - 无合成器：透明区会被贴成未初始化像素，必须退回不透明 + 快照自模糊。
+    translucent_ = compositorRunning();
+    if (translucent_) setAttribute(Qt::WA_TranslucentBackground, true);
+    // 左侧分类列表固定 92px + 间距 12px，右侧内容区保持原来的 ~400px。
+    setFixedWidth(540);
     setStyleSheet(kStyle);
     buildUi();
+
+    // 快照只在没有合成器时才会用到；此时窗口还没显示，抓屏拍不到面板自身。
+    if (!translucent_) captureBackdrop();
 
     configStamp_ = QFileInfo(QString::fromStdString(path_)).lastModified();
 
@@ -285,21 +422,60 @@ void Menu::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    // 不透明底色：无合成器环境下这是唯一能保证内容可读的画法。
-    painter.fillRect(rect(), QColor(15, 17, 19, 255));
-
     const QRectF panel = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-    painter.setPen(QPen(QColor(255, 255, 255, 56), 1.0));
+    QPainterPath shape;
+    shape.addRoundedRect(panel, 14.0, 14.0);
+    painter.setClipPath(shape);
+
+    // 玻璃底层：有合成器时只铺一层半透明白，背后画面由合成器实时合成后透出；
+    // 无合成器时才退回静态快照。
+    if (translucent_) {
+        painter.fillRect(rect(), QColor(252, 253, 254, kGlassAlpha));
+    } else {
+        if (backdropDirty_) rebuildBackdrop();
+        if (!backdropBlurred_.isNull()) {
+            painter.drawPixmap(rect(), backdropBlurred_);
+            // 压一层白色玻璃：既保证深色文字可读，也不让模糊背景抢主体。
+            painter.fillRect(rect(), QColor(252, 253, 254, kGlassAlpha));
+        } else {
+            painter.fillRect(rect(), QColor(252, 253, 254, 255));
+        }
+    }
+
+    // 磨砂质感：深色噪声颗粒 + 顶部一道极淡的压暗，模拟玻璃的散射与厚度。
+    painter.drawTiledPixmap(rect(), grainTexture());
+    QLinearGradient sheen(0.0, 0.0, 0.0, static_cast<qreal>(height()));
+    sheen.setColorAt(0.0, QColor(0, 0, 0, 5));
+    sheen.setColorAt(0.4, QColor(0, 0, 0, 0));
+    painter.fillRect(rect(), sheen);
+    painter.setClipping(false);
+
+    // 外描边压一层很淡的深灰，只勾出圆角轮廓，不留下明显边框。
+    painter.setPen(QPen(QColor(0, 0, 0, 30), 1.0));
     painter.setBrush(Qt::NoBrush);
     painter.drawRoundedRect(panel, 14.0, 14.0);
 }
 
 void Menu::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
+    // 半透明路径下圆角由 ARGB 像素决定，mask 会把边缘切硬，必须跳过。
+    if (translucent_) {
+        clearMask();
+        backdropDirty_ = true;
+        return;
+    }
     // 圆角靠窗口遮罩实现（XShape），不依赖合成器；四角直接被裁掉而不是画成透明。
     QPainterPath path;
     path.addRoundedRect(QRectF(rect()), 14.0, 14.0);
     setMask(QRegion(path.toFillPolygon().toPolygon()));
+    // 尺寸变了，背景裁剪范围也要跟着重算。
+    backdropDirty_ = true;
+}
+
+void Menu::moveEvent(QMoveEvent* event) {
+    QWidget::moveEvent(event);
+    // 拖动后窗口落到屏幕的新位置，需要从快照里重新裁一块。
+    backdropDirty_ = true;
 }
 
 void Menu::showEvent(QShowEvent* event) {
@@ -313,7 +489,35 @@ void Menu::showEvent(QShowEvent* event) {
             const QRect area = screen->availableGeometry();
             move(area.center() - QPoint(width() / 2, height() / 2));
         }
+        // 居中后位置才最终确定，这时再裁背景。
+        backdropDirty_ = true;
+        update();
     });
+}
+
+void Menu::captureBackdrop() {
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if (!screen) return;
+    // 抓整个屏幕（WId 0 即 root 窗口）。构造阶段窗口还没 show，
+    // 所以这张快照里不会有面板自身的内容。
+    backdrop_ = screen->grabWindow(0).toImage();
+    backdropDirty_ = true;
+}
+
+void Menu::rebuildBackdrop() {
+    backdropDirty_ = false;
+    backdropBlurred_ = QPixmap();
+    if (backdrop_.isNull() || width() <= 0 || height() <= 0) return;
+
+    // 从快照里裁出窗口当前覆盖的区域；越界部分由 copy 自动裁掉。
+    QImage piece = backdrop_.copy(QRect(geometry().topLeft(), size()));
+    if (piece.width() < 2 || piece.height() < 2) return;
+
+    // 降采样到 1/8 再平滑放大：等价于一次大半径高斯，开销远低于逐像素卷积。
+    const QSize tiny(std::max(1, width() / 8), std::max(1, height() / 8));
+    piece = piece.scaled(tiny, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    piece = piece.scaled(size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    backdropBlurred_ = QPixmap::fromImage(piece);
 }
 
 void Menu::mousePressEvent(QMouseEvent* event) {
@@ -330,17 +534,15 @@ void Menu::mouseMoveEvent(QMouseEvent* event) {
     QWidget::mouseMoveEvent(event);
 }
 
-bool Menu::eventFilter(QObject* watched, QEvent* event) {
-    // 参数弹层一关就落盘：右键调完即生效，不必再回到底部点保存。
-    if (event->type() == QEvent::Hide &&
-        popups_.values().contains(static_cast<QWidget*>(watched))) {
-        apply();
-    }
-    return QWidget::eventFilter(watched, event);
-}
+QWidget* Menu::makeRow(QCheckBox* toggle, const QString& name, const QString& hint,
+                       const std::function<void(QVBoxLayout*)>& build) {
+    // 每行是一个单元：上面是功能行，下面是可展开的参数区（默认收起）。
+    auto* unit = new QWidget(this);
+    auto* unitLayout = new QVBoxLayout(unit);
+    unitLayout->setContentsMargins(0, 0, 0, 0);
+    unitLayout->setSpacing(0);
 
-QWidget* Menu::makeRow(QCheckBox* toggle, const QString& name, const QString& hint) {
-    auto* row = new QWidget(this);
+    auto* row = new QWidget(unit);
     row->setObjectName("row");
     auto* layout = new QHBoxLayout(row);
     layout->setContentsMargins(8, 3, 8, 3);
@@ -350,55 +552,50 @@ QWidget* Menu::makeRow(QCheckBox* toggle, const QString& name, const QString& hi
     toggle->setCursor(Qt::PointingHandCursor);
     layout->addWidget(toggle);
     layout->addStretch(1);
+    unitLayout->addWidget(row);
 
-    auto* hintLabel = new QLabel(hint, row);
-    hintLabel->setObjectName("hint");
-    layout->addWidget(hintLabel);
-    return row;
-}
+    if (!build) {
+        auto* hintLabel = new QLabel(hint, row);
+        hintLabel->setObjectName("hint");
+        layout->addWidget(hintLabel);
+        return unit;
+    }
 
-void Menu::attachParams(QWidget* row, QCheckBox* toggle, const QString& title,
-                        const std::function<void(QVBoxLayout*)>& build) {
-    popupBuilders_.insert(title, build);
-    // 右键在行内任意位置都能出弹层：勾选框本身也要单独接一次，
-    // 否则点在文字上时事件被 QCheckBox 吃掉，父行收不到右键。
+    // 参数入口：点一下就地展开/收起，不再另开浮窗。
+    auto* entry = new QPushButton(QString::fromUtf8("参数 ▸"), row);
+    entry->setCursor(Qt::PointingHandCursor);
+    entry->setFocusPolicy(Qt::NoFocus);
+    entry->setStyleSheet(
+        "QPushButton{background:transparent;border:none;color:#71787F;font-size:10px;padding:1px 2px;}"
+        "QPushButton:hover{color:#14171A;}");
+    layout->addWidget(entry);
+
+    auto* panel = new QWidget(unit);
+    panel->setObjectName("paramPanel");
+    panel->setAttribute(Qt::WA_StyledBackground, true);
+    panel->setStyleSheet("QWidget#paramPanel{background:rgba(0,0,0,10);border-radius:8px;}");
+    auto* panelLayout = new QVBoxLayout(panel);
+    panelLayout->setContentsMargins(14, 8, 10, 8);
+    panelLayout->setSpacing(7);
+    build(panelLayout);
+    panel->hide();
+    unitLayout->addWidget(panel);
+
+    auto togglePanel = [this, panel, entry] {
+        const bool shown = !panel->isVisible();
+        panel->setVisible(shown);
+        entry->setText(shown ? QString::fromUtf8("参数 ▾") : QString::fromUtf8("参数 ▸"));
+        // 收起即落盘：保持「调完就生效」的旧手感，不用再回底部点保存。
+        if (!shown) apply();
+    };
+    connect(entry, &QPushButton::clicked, this, [togglePanel] { togglePanel(); });
+    // 行内任意位置右键也能开合，保留原来的手感；参数改动由底部「应用并保存」落盘。
     for (QWidget* target : {row, static_cast<QWidget*>(toggle)}) {
         target->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(target, &QWidget::customContextMenuRequested, this,
-                [this, row, title](const QPoint& pos) {
-                    QWidget* popup = ensurePopup(title);
-                    popup->move(row->mapToGlobal(pos));
-                    popup->show();
-                    popup->raise();
-                });
+                [togglePanel](const QPoint&) { togglePanel(); });
     }
-}
-
-QWidget* Menu::ensurePopup(const QString& title) {
-    if (QWidget* existing = popups_.value(title, nullptr)) return existing;
-
-    auto* popup = new QWidget(this, Qt::Popup);
-    popup->setObjectName("popup");
-    popup->setAttribute(Qt::WA_StyledBackground, true);
-    popup->setStyleSheet(kStyle);
-    popup->setMinimumWidth(258);
-
-    auto* layout = new QVBoxLayout(popup);
-    layout->setContentsMargins(14, 12, 14, 12);
-    layout->setSpacing(8);
-    auto* heading = new QLabel(title, popup);
-    heading->setObjectName("field");
-    layout->addWidget(heading);
-
-    if (const auto build = popupBuilders_.value(title); build) build(layout);
-
-    auto* foot = new QLabel("松开即生效", popup);
-    foot->setObjectName("hint");
-    layout->addWidget(foot);
-
-    popup->installEventFilter(this);
-    popups_.insert(title, popup);
-    return popup;
+    return unit;
 }
 
 void Menu::buildUi() {
@@ -430,33 +627,49 @@ void Menu::buildUi() {
     root->addWidget(status_);
     root->addWidget(rule(this));
 
-    // ---- 主体：顶部横向类别栏 + 单行功能表 ----
-    // 类别按钮横排铺满一行，避免左侧竖直堆放时挤成一团。
-    auto* navBar = new QHBoxLayout();
-    navBar->setSpacing(6);
-    navBar->setContentsMargins(0, 0, 0, 0);
-    const QStringList tabNames{"透 视", "自 瞄", "扳 机", "日 志"};
+    // ---- 主体：左侧分类列表 + 右侧内容页 ----
+    // 左列固定宽度竖排导航，右列 QStackedWidget 只显示当前类别的功能行。
+    auto* body = new QHBoxLayout();
+    body->setSpacing(12);
+    body->setContentsMargins(0, 0, 0, 0);
+
+    auto* navColumn = new QWidget(this);
+    navColumn->setObjectName("navColumn");
+    navColumn->setFixedWidth(92);
+    auto* navLayout = new QVBoxLayout(navColumn);
+    navLayout->setContentsMargins(0, 0, 0, 0);
+    navLayout->setSpacing(4);
+
+    auto* content = new QWidget(this);
+    auto* contentLayout = new QVBoxLayout(content);
+    contentLayout->setContentsMargins(0, 0, 0, 0);
+    contentLayout->setSpacing(10);
+
+    const QStringList tabNames{"透视", "自瞄", "扳机", "日志"};
     for (int i = 0; i < tabNames.size(); ++i) {
-        auto* tab = new QPushButton(tabNames.at(i), this);
-        tab->setObjectName("tab");
+        auto* tab = new QPushButton(tabNames.at(i), navColumn);
+        tab->setObjectName("nav");
+        tab->setStyleSheet(kNavStyle);
         tab->setCheckable(true);
         tab->setAutoExclusive(true);
         tab->setCursor(Qt::PointingHandCursor);
         tab->setFocusPolicy(Qt::NoFocus);
-        tab->setFixedHeight(30);
+        tab->setFixedHeight(34);
         tab->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        navBar->addWidget(tab, 1);
+        navLayout->addWidget(tab);
         tabs_[i] = tab;
         connect(tab, &QPushButton::clicked, this, [this, i] { pages_->setCurrentIndex(i); });
     }
     if (tabs_[0]) tabs_[0]->setChecked(true);
+    navLayout->addStretch(1);
 
-    pages_ = new QStackedWidget(this);
+    pages_ = new QStackedWidget(content);
     pages_->setObjectName("pages");
+    contentLayout->addWidget(pages_, 1);
 
-    root->addLayout(navBar);
-    root->addSpacing(8);
-    root->addWidget(pages_, 1);
+    body->addWidget(navColumn);
+    body->addWidget(content, 1);
+    root->addLayout(body, 1);
 
     // 每页一个竖排行表：行高固定，内容超出时页内滚动。
     auto addPage = [this]() -> QVBoxLayout* {
@@ -483,36 +696,41 @@ void Menu::buildUi() {
     };
 
     // ---- 控件构造（参数控件不在页面里，只在右键弹层里出现一次）----
-    espEnabled_ = new QCheckBox(this);
+    espEnabled_ = new ToggleSwitch(this);
     espEnabled_->setChecked(initial.esp.enabled);
-    espBox_ = new QCheckBox(this);
+    espBox_ = new ToggleSwitch(this);
     espBox_->setChecked(initial.esp.box);
-    espHealth_ = new QCheckBox(this);
+    espHealth_ = new ToggleSwitch(this);
     espHealth_->setChecked(initial.esp.health);
-    espHealthText_ = new QCheckBox(this);
+    espHealthText_ = new ToggleSwitch(this);
     espHealthText_->setChecked(initial.esp.healthText);
-    espArmor_ = new QCheckBox(this);
+    espArmor_ = new ToggleSwitch(this);
     espArmor_->setChecked(initial.esp.armor);
-    espDamage_ = new QCheckBox(this);
+    espDamage_ = new ToggleSwitch(this);
     espDamage_->setChecked(initial.esp.damageNumbers);
-    espDistance_ = new QCheckBox(this);
+    espDistance_ = new ToggleSwitch(this);
     espDistance_->setChecked(initial.esp.distance);
-    espSkeleton_ = new QCheckBox(this);
+    espSkeleton_ = new ToggleSwitch(this);
     espSkeleton_->setChecked(initial.esp.skeleton);
-    espTeam_ = new QCheckBox(this);
+    espTeam_ = new ToggleSwitch(this);
     espTeam_->setChecked(initial.esp.teamCheck);
-    espVisibility_ = new QCheckBox(this);
+    espVisibility_ = new ToggleSwitch(this);
     espVisibility_->setChecked(initial.esp.visibilityCheck);
 
-    espRadar_ = new QCheckBox(this);
+    espRadar_ = new ToggleSwitch(this);
     espRadar_->setChecked(initial.esp.radar);
+    espRadarRotate_ = new ToggleSwitch(this);
+    espRadarRotate_->setChecked(initial.esp.radarRotate);
     espRadarRange_ = new QSpinBox(this);
     espRadarRange_->setRange(5, 300);
     espRadarRange_->setSuffix(" m");
     espRadarRange_->setValue(static_cast<int>(initial.esp.radarRange));
     espRadarRange_->setFixedWidth(78);
 
-    espTrail_ = new QCheckBox(this);
+    espOffscreen_ = new ToggleSwitch(this);
+    espOffscreen_->setChecked(initial.esp.offscreen);
+
+    espTrail_ = new ToggleSwitch(this);
     espTrail_->setChecked(initial.esp.trail);
     espTrailMs_ = new QSpinBox(this);
     espTrailMs_->setRange(50, 1000);
@@ -534,12 +752,12 @@ void Menu::buildUi() {
     espDamageColor_->setCurrentIndex(colorIndex >= 0 ? colorIndex : 0);
     espDamageColor_->setFixedWidth(84);
 
-    espHighlight_ = new QCheckBox(this);
+    espHighlight_ = new ToggleSwitch(this);
     espHighlight_->setChecked(initial.esp.highlight);
 
-    aimEnabled_ = new QCheckBox(this);
+    aimEnabled_ = new ToggleSwitch(this);
     aimEnabled_->setChecked(initial.aim.enabled);
-    aimTeam_ = new QCheckBox(this);
+    aimTeam_ = new ToggleSwitch(this);
     aimTeam_->setChecked(initial.aim.teamCheck);
     aimStrategy_ = new QComboBox(this);
     aimStrategy_->addItem("屏幕最近");
@@ -564,9 +782,9 @@ void Menu::buildUi() {
     aimScopeKey_ = mouseKeyCombo(this, initial.aim.scopeKey);
     aimFireKey_ = mouseKeyCombo(this, initial.aim.fireKey);
 
-    recoilEnabled_ = new QCheckBox(this);
+    recoilEnabled_ = new ToggleSwitch(this);
     recoilEnabled_->setChecked(initial.recoil.enabled);
-    recoilRequireFire_ = new QCheckBox(this);
+    recoilRequireFire_ = new ToggleSwitch(this);
     recoilRequireFire_->setChecked(initial.recoil.requireFire);
     recoilStrength_ = new QDoubleSpinBox(this);
     recoilStrength_->setRange(-3.0, 3.0);
@@ -580,9 +798,9 @@ void Menu::buildUi() {
     recoilMax_->setValue(static_cast<int>(initial.recoil.maxDegrees));
     recoilMax_->setFixedWidth(74);
 
-    trackEnabled_ = new QCheckBox(this);
+    trackEnabled_ = new ToggleSwitch(this);
     trackEnabled_->setChecked(initial.track.enabled);
-    trackTeam_ = new QCheckBox(this);
+    trackTeam_ = new ToggleSwitch(this);
     trackTeam_->setChecked(initial.track.teamCheck);
     trackFov_ = new QSpinBox(this);
     trackFov_->setRange(0, 2000);
@@ -596,7 +814,7 @@ void Menu::buildUi() {
     trackSmooth_->setFixedWidth(66);
     trackKey_ = mouseKeyCombo(this, initial.track.key);
 
-    triggerEnabled_ = new QCheckBox(this);
+    triggerEnabled_ = new ToggleSwitch(this);
     triggerEnabled_->setChecked(initial.trigger.enabled);
     triggerDelay_ = new QSpinBox(this);
     triggerDelay_->setRange(1, 500);
@@ -610,9 +828,9 @@ void Menu::buildUi() {
     triggerCooldown_->setFixedWidth(82);
     triggerKey_ = mouseKeyCombo(this, initial.trigger.key);
 
-    silentEnabled_ = new QCheckBox(this);
+    silentEnabled_ = new ToggleSwitch(this);
     silentEnabled_->setChecked(initial.silent.enabled);
-    silentTeam_ = new QCheckBox(this);
+    silentTeam_ = new ToggleSwitch(this);
     silentTeam_->setChecked(initial.silent.teamCheck);
     silentFov_ = new QSpinBox(this);
     silentFov_->setRange(0, 2000);
@@ -627,18 +845,7 @@ void Menu::buildUi() {
     silentHold_->setFixedWidth(82);
     silentKey_ = mouseKeyCombo(this, initial.silent.key);
 
-    // 参数控件只存在于右键弹层里。弹层是首次右键才创建的，在那之前它们仍挂在面板上，
-    // 全部堆在 (0,0) 画出来就是左上角那团糊在一起的按键。这里先收进一个隐藏容器，
-    // 等 paramRow() 把它们加进弹层时再由 Qt 重新挂到弹层行上。
-    auto* paramHolder = new QWidget(this);
-    paramHolder->hide();
-    const std::initializer_list<QWidget*> paramControls{
-        espRadarRange_, espTrailMs_, espDamageMs_, espDamageColor_, aimStrategy_, aimSmooth_,
-        aimFov_,       aimSensitivity_, aimScopeKey_, aimFireKey_, aimTeam_,  recoilStrength_,
-        recoilMax_,    recoilRequireFire_, trackFov_, trackSmooth_, trackKey_, trackTeam_,
-        triggerDelay_, triggerCooldown_, triggerKey_, silentFov_, silentHold_, silentKey_,
-        silentTeam_};
-    for (QWidget* control : paramControls) control->setParent(paramHolder);
+    // 参数控件直接挂在各行下方的下拉区里，不再需要临时隐藏容器。
 
     // ---- 页一：透视 ----
     QVBoxLayout* espLayout = addPage();
@@ -651,88 +858,66 @@ void Menu::buildUi() {
     espLayout->addWidget(makeRow(espSkeleton_, "骨骼连线", ""));
     espLayout->addWidget(makeRow(espVisibility_, "遮挡虚线", ""));
     espLayout->addWidget(makeRow(espTeam_, "过滤队友", ""));
-    {
-        QWidget* row = makeRow(espDamage_, "伤害浮字", "右键参数");
-        attachParams(row, espDamage_, "伤害浮字", [this, row](QVBoxLayout* layout) {
-            layout->addWidget(paramRow("显示时长", espDamageMs_, row));
-            layout->addWidget(paramRow("颜色", espDamageColor_, row));
-        });
-        espLayout->addWidget(row);
-    }
-    {
-        QWidget* row = makeRow(espTrail_, "残影轨迹", "右键参数");
-        attachParams(row, espTrail_, "残影轨迹", [this, row](QVBoxLayout* layout) {
-            layout->addWidget(paramRow("拖尾时长", espTrailMs_, row));
-        });
-        espLayout->addWidget(row);
-    }
+    espLayout->addWidget(makeRow(espDamage_, "伤害浮字", "", [this](QVBoxLayout* layout) {
+        QWidget* parent = layout->parentWidget();
+        layout->addWidget(paramRow("显示时长", espDamageMs_, parent));
+        layout->addWidget(paramRow("颜色", espDamageColor_, parent));
+    }));
+    espLayout->addWidget(makeRow(espTrail_, "残影轨迹", "", [this](QVBoxLayout* layout) {
+        QWidget* parent = layout->parentWidget();
+        layout->addWidget(paramRow("拖尾时长", espTrailMs_, parent));
+    }));
     espLayout->addWidget(makeRow(espHighlight_, "残血描边", ""));
-    {
-        QWidget* row = makeRow(espRadar_, "2D 雷达", "右键参数");
-        attachParams(row, espRadar_, "2D 雷达", [this, row](QVBoxLayout* layout) {
-            layout->addWidget(paramRow("半径", espRadarRange_, row));
-        });
-        espLayout->addWidget(row);
-    }
+    espLayout->addWidget(makeRow(espRadar_, "2D 雷达", "", [this](QVBoxLayout* layout) {
+        QWidget* parent = layout->parentWidget();
+        layout->addWidget(paramRow("半径", espRadarRange_, parent));
+        layout->addWidget(paramRow("随视角旋转", espRadarRotate_, parent));
+    }));
+    espLayout->addWidget(makeRow(espOffscreen_, "屏外指示", ""));
     espLayout->addStretch(1);
 
     // ---- 页二：自瞄 ----
     QVBoxLayout* aimLayout = addPage();
-    {
-        QWidget* row = makeRow(aimEnabled_, "自瞄", "右键参数");
-        attachParams(row, aimEnabled_, "自瞄参数", [this, row](QVBoxLayout* layout) {
-            layout->addWidget(paramRow("策略", aimStrategy_, row));
-            layout->addWidget(paramRow("平滑", aimSmooth_, row));
-            layout->addWidget(paramRow("范围", aimFov_, row));
-            layout->addWidget(paramRow("灵敏度", aimSensitivity_, row));
-            layout->addWidget(paramRow("开镜键", aimScopeKey_, row));
-            layout->addWidget(paramRow("开火键", aimFireKey_, row));
-            layout->addWidget(paramRow("过滤队友", aimTeam_, row));
-        });
-        aimLayout->addWidget(row);
-    }
-    {
-        QWidget* row = makeRow(recoilEnabled_, "后坐力抵消", "右键参数");
-        attachParams(row, recoilEnabled_, "后坐力抵消", [this, row](QVBoxLayout* layout) {
-            layout->addWidget(paramRow("强度", recoilStrength_, row));
-            layout->addWidget(paramRow("单帧上限", recoilMax_, row));
-            layout->addWidget(paramRow("仅开火时", recoilRequireFire_, row));
-        });
-        aimLayout->addWidget(row);
-    }
-    {
-        QWidget* row = makeRow(trackEnabled_, "子弹追踪", "右键参数");
-        attachParams(row, trackEnabled_, "子弹追踪", [this, row](QVBoxLayout* layout) {
-            layout->addWidget(paramRow("半径", trackFov_, row));
-            layout->addWidget(paramRow("平滑", trackSmooth_, row));
-            layout->addWidget(paramRow("触发键", trackKey_, row));
-            layout->addWidget(paramRow("过滤队友", trackTeam_, row));
-        });
-        aimLayout->addWidget(row);
-    }
+    aimLayout->addWidget(makeRow(aimEnabled_, "自瞄", "", [this](QVBoxLayout* layout) {
+        QWidget* parent = layout->parentWidget();
+        layout->addWidget(paramRow("策略", aimStrategy_, parent));
+        layout->addWidget(paramRow("平滑", aimSmooth_, parent));
+        layout->addWidget(paramRow("范围", aimFov_, parent));
+        layout->addWidget(paramRow("灵敏度", aimSensitivity_, parent));
+        layout->addWidget(paramRow("开镜键", aimScopeKey_, parent));
+        layout->addWidget(paramRow("开火键", aimFireKey_, parent));
+        layout->addWidget(paramRow("过滤队友", aimTeam_, parent));
+    }));
+    aimLayout->addWidget(makeRow(recoilEnabled_, "后坐力抵消", "", [this](QVBoxLayout* layout) {
+        QWidget* parent = layout->parentWidget();
+        layout->addWidget(paramRow("强度", recoilStrength_, parent));
+        layout->addWidget(paramRow("单帧上限", recoilMax_, parent));
+        layout->addWidget(paramRow("仅开火时", recoilRequireFire_, parent));
+    }));
+    aimLayout->addWidget(makeRow(trackEnabled_, "子弹追踪", "", [this](QVBoxLayout* layout) {
+        QWidget* parent = layout->parentWidget();
+        layout->addWidget(paramRow("半径", trackFov_, parent));
+        layout->addWidget(paramRow("平滑", trackSmooth_, parent));
+        layout->addWidget(paramRow("触发键", trackKey_, parent));
+        layout->addWidget(paramRow("过滤队友", trackTeam_, parent));
+    }));
     aimLayout->addStretch(1);
 
     // ---- 页三：扳机 ----
     QVBoxLayout* triggerLayout = addPage();
-    {
-        QWidget* row = makeRow(triggerEnabled_, "自动扳机", "右键参数");
-        attachParams(row, triggerEnabled_, "自动扳机", [this, row](QVBoxLayout* layout) {
-            layout->addWidget(paramRow("按住", triggerDelay_, row));
-            layout->addWidget(paramRow("冷却", triggerCooldown_, row));
-            layout->addWidget(paramRow("触发键", triggerKey_, row));
-        });
-        triggerLayout->addWidget(row);
-    }
-    {
-        QWidget* row = makeRow(silentEnabled_, "静默锁头", "右键参数");
-        attachParams(row, silentEnabled_, "静默锁头", [this, row](QVBoxLayout* layout) {
-            layout->addWidget(paramRow("半径", silentFov_, row));
-            layout->addWidget(paramRow("停留", silentHold_, row));
-            layout->addWidget(paramRow("触发键", silentKey_, row));
-            layout->addWidget(paramRow("过滤队友", silentTeam_, row));
-        });
-        triggerLayout->addWidget(row);
-    }
+    triggerLayout->addWidget(makeRow(triggerEnabled_, "自动扳机", "", [this](QVBoxLayout* layout) {
+        QWidget* parent = layout->parentWidget();
+        layout->addWidget(paramRow("按住", triggerDelay_, parent));
+        layout->addWidget(paramRow("冷却", triggerCooldown_, parent));
+        layout->addWidget(paramRow("触发键", triggerKey_, parent));
+    }));
+    triggerLayout->addWidget(makeRow(silentEnabled_, "静默锁头", "", [this](QVBoxLayout* layout) {
+        QWidget* parent = layout->parentWidget();
+        layout->addWidget(paramRow("半径", silentFov_, parent));
+        layout->addWidget(paramRow("停留", silentHold_, parent));
+        layout->addWidget(paramRow("触发键", silentKey_, parent));
+        layout->addWidget(paramRow("过滤队友", silentTeam_, parent));
+    }));
     triggerLayout->addStretch(1);
 
     // ---- 页四：日志 ----
@@ -746,7 +931,7 @@ void Menu::buildUi() {
     logLayout->addWidget(logView_);
     logLayout->addStretch(1);
 
-    root->addWidget(rule(this));
+    contentLayout->addWidget(rule(this));
 
     auto* hint = new QLabel(this);
     hint->setWordWrap(true);
@@ -767,7 +952,7 @@ void Menu::buildUi() {
         hint->setText("偏移缺失：" + missing.join(" / ") +
                       " · 透视与自瞄不会生效，先运行 tools/cs2_linux_offsets.py");
     }
-    root->addWidget(hint);
+    contentLayout->addWidget(hint);
 
     auto* actions = new QHBoxLayout();
     actions->setSpacing(10);
@@ -784,7 +969,7 @@ void Menu::buildUi() {
 
     actions->addWidget(restoreButton, 1);
     actions->addWidget(applyButton, 2);
-    root->addLayout(actions);
+    contentLayout->addLayout(actions);
 }
 
 void Menu::apply() {
@@ -802,7 +987,9 @@ void Menu::apply() {
     next.esp.teamCheck = espTeam_->isChecked();
     next.esp.visibilityCheck = espVisibility_->isChecked();
     next.esp.radar = espRadar_->isChecked();
+    next.esp.radarRotate = espRadarRotate_->isChecked();
     next.esp.radarRange = static_cast<float>(espRadarRange_->value());
+    next.esp.offscreen = espOffscreen_->isChecked();
     next.esp.trail = espTrail_->isChecked();
     next.esp.trailMs = espTrailMs_->value();
     next.esp.highlight = espHighlight_->isChecked();
@@ -911,7 +1098,9 @@ void Menu::syncFrom(const Config& config) {
     espTeam_->setChecked(config.esp.teamCheck);
     espVisibility_->setChecked(config.esp.visibilityCheck);
     espRadar_->setChecked(config.esp.radar);
+    espRadarRotate_->setChecked(config.esp.radarRotate);
     espRadarRange_->setValue(static_cast<int>(config.esp.radarRange));
+    espOffscreen_->setChecked(config.esp.offscreen);
     espTrail_->setChecked(config.esp.trail);
     espTrailMs_->setValue(config.esp.trailMs);
     espHighlight_->setChecked(config.esp.highlight);
