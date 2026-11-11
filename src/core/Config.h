@@ -20,6 +20,8 @@ struct AimbotConfig {
     float maxDistance{0.f};  // 0 = 不限
     // 目标选择：0 = 屏幕最近，1 = 血量最低，2 = 世界最近
     int strategy{0};
+    // 锁定当前目标直到它死亡或离开 FOV，避免贴身多目标时准星来回跳
+    bool lockTarget{false};
 };
 
 struct RecoilConfig {

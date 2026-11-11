@@ -85,6 +85,7 @@ private:
 
     QCheckBox* aimEnabled_{nullptr};
     QComboBox* aimStrategy_{nullptr};
+    QCheckBox* aimLock_{nullptr};
     QSpinBox* aimSmooth_{nullptr};
     QSpinBox* aimFov_{nullptr};
     QDoubleSpinBox* aimSensitivity_{nullptr};

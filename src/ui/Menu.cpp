@@ -904,6 +904,8 @@ void Menu::buildUi() {
     aimStrategy_->addItem("世界最近");
     aimStrategy_->setCurrentIndex(std::clamp(initial.aim.strategy, 0, 2));
     aimStrategy_->setFixedWidth(120);
+    aimLock_ = new ToggleSwitch(this);
+    aimLock_->setChecked(initial.aim.lockTarget);
     aimSmooth_ = new QSpinBox(this);
     aimSmooth_->setRange(1, 40);
     aimSmooth_->setValue(initial.aim.smooth);
@@ -1030,6 +1032,7 @@ void Menu::buildUi() {
     aimLayout->addWidget(makeRow(aimEnabled_, "自瞄", "", [this](QVBoxLayout* layout) {
         QWidget* parent = layout->parentWidget();
         layout->addWidget(paramRow("策略", aimStrategy_, parent));
+        layout->addWidget(paramRow("锁定目标", aimLock_, parent));
         layout->addWidget(paramRow("平滑", aimSmooth_, parent));
         layout->addWidget(paramRow("范围", aimFov_, parent));
         layout->addWidget(paramRow("灵敏度", aimSensitivity_, parent));
@@ -1150,6 +1153,7 @@ void Menu::apply() {
 
     next.aim.enabled = aimEnabled_->isChecked();
     next.aim.strategy = aimStrategy_->currentIndex();
+    next.aim.lockTarget = aimLock_->isChecked();
     next.aim.smooth = aimSmooth_->value();
     next.aim.fovPixels = static_cast<float>(aimFov_->value());
     next.aim.sensitivityFactor = static_cast<float>(aimSensitivity_->value());
@@ -1265,6 +1269,7 @@ void Menu::syncFrom(const Config& config) {
 
     aimEnabled_->setChecked(config.aim.enabled);
     aimStrategy_->setCurrentIndex(std::clamp(config.aim.strategy, 0, 2));
+    aimLock_->setChecked(config.aim.lockTarget);
     aimSmooth_->setValue(config.aim.smooth);
     aimFov_->setValue(static_cast<int>(config.aim.fovPixels));
     aimSensitivity_->setValue(config.aim.sensitivityFactor);

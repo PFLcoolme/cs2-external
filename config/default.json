@@ -45,7 +45,8 @@
     "sensitivityFactor": 0.45,
     "teamCheck": true,
     "maxDistance": 0.0,
-    "strategy": 0
+    "strategy": 0,
+    "lockTarget": false
   },
   "recoil": {
     "enabled": false,

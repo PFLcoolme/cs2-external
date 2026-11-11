@@ -60,7 +60,7 @@
 | 屏外指示 | 视野外敌人在屏幕边缘显示方位箭头与距离 | ✅ 可用 |
 | 敌人列表 | 右侧按距离排序，最多 10 行，显示血量 | ✅ 可用 |
 | 高度差 | 目标在楼上/楼下用 ▲▼ 标出，附米数 | ✅ 可用 |
-| 自瞄 | FOV 内目标，**仅在开镜 + 开火同时按住时**平滑位移到头部 | ✅ 可用 |
+| 自瞄 | FOV 内目标平滑位移到头部；触发键可配（默认开镜 + 开火同时按住），支持锁定单一目标 | ✅ 可用 |
 | 后坐力抵消 | 按 `m_aimPunchAngle` 反向补偿，可限制仅开火时生效 | ✅ 可用 |
 | 子弹追踪 | 按住触发键把准星贴到最近目标头部 | ✅ 可用 |
 | 静默锁头 | 贴头 → 点击 → 归位，在 `holdMs` 内完成 | ✅ 可用 |
@@ -299,6 +299,7 @@ graph TD
 | `aim` | `scopeKey` / `fireKey` | `3` / `1` | 开镜 / 开火键；`0` = 不要求 |
 | `aim` | `fovPixels` / `smooth` / `sensitivityFactor` | `220` / `5` / `0.45` | 范围、平滑步数、灵敏度 |
 | `aim` | `strategy` | `0` | 目标策略：0 屏幕最近 / 1 血量最低 / 2 世界最近 |
+| `aim` | `lockTarget` | `false` | 锁定当前目标，直到其死亡或离开 FOV |
 | `recoil` | `enabled` / `strength` / `maxDegrees` / `requireFire` | `false` / `0.6` / `12` / `true` | 后坐力抵消 |
 | `track` | `enabled` / `key` / `fovPixels` / `smooth` | `false` / `1` / `0` / `1` | 子弹追踪 |
 | `silent` | `enabled` / `key` / `holdMs` / `cooldownMs` | `false` / `2` / `30` / `120` | 静默锁头 |

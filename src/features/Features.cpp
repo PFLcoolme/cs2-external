@@ -375,6 +375,16 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
         const float metric = config.aim.strategy == 1
                                  ? static_cast<float>(player.health)
                                  : (config.aim.strategy == 2 ? player.distance : distance);
+
+        // 目标锁定：已锁定的目标只要还在 FOV 内且存活就直接续上，
+        // 避免两个敌人贴身时准星每帧在两者之间来回跳。
+        if (config.aim.lockTarget && player.index == lockedIndex_) {
+            best = &player;
+            bestVisible = visible;
+            bestMetric = metric;
+            break;
+        }
+
         bool better = best == nullptr;
         if (!better) {
             better = (visible != bestVisible) ? visible : (metric < bestMetric);
@@ -386,6 +396,7 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
         bestMetric = metric;
     }
     if (!best) {
+        lockedIndex_ = -1;  // 目标死亡或出了 FOV，解锁
         if (++debugAimTick_ % 200 == 0) {
             trace("[aim] no target in fov=%.0f nearest=%.1f players=%zu\n",
                   static_cast<double>(config.aim.fovPixels), static_cast<double>(nearest),
@@ -393,6 +404,7 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
         }
         return;
     }
+    lockedIndex_ = best->index;
 
     const int steps = std::max(1, config.aim.smooth);
     const float deltaX =

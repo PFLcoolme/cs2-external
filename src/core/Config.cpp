@@ -136,6 +136,7 @@ Config Config::load(const std::string& path) {
             static_cast<float>(o.value("sensitivityFactor").toDouble(cfg.aim.sensitivityFactor));
         cfg.aim.teamCheck = o.value("teamCheck").toBool(cfg.aim.teamCheck);
         cfg.aim.strategy = asInt(o, "strategy", cfg.aim.strategy);
+        cfg.aim.lockTarget = o.value("lockTarget").toBool(cfg.aim.lockTarget);
         cfg.aim.maxDistance =
             static_cast<float>(o.value("maxDistance").toDouble(cfg.aim.maxDistance));
     }
@@ -232,6 +233,7 @@ void Config::save(const std::string& path) const {
     aimObj["sensitivityFactor"] = static_cast<double>(aim.sensitivityFactor);
     aimObj["teamCheck"] = aim.teamCheck;
     aimObj["strategy"] = aim.strategy;
+    aimObj["lockTarget"] = aim.lockTarget;
     aimObj["maxDistance"] = static_cast<double>(aim.maxDistance);
     root["aim"] = aimObj;
 

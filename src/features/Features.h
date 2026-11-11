@@ -43,6 +43,7 @@ private:
     std::chrono::steady_clock::time_point nextTrigger_{};
     std::chrono::steady_clock::time_point nextSilent_{};
     Vec2 lastPunch_{};  // 上一帧的后坐力角度，用于只补偿增量
+    int lockedIndex_{-1};  // 当前锁定的实体序号，-1 表示未锁定
     long debugTick_{0};  // 诊断日志节流计数（门控）
     long debugAimTick_{0};  // 诊断日志节流计数（自瞄）
     unsigned int lastMask_{0};  // 上一次指针按键掩码，用于记录物理键位变化
