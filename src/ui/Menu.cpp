@@ -888,8 +888,8 @@ void Menu::buildUi() {
         scroll->setFrameShape(QFrame::NoFrame);
         scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         // 行表是本面板的主体：给一个下限高度，避免 QStackedWidget 按空页压缩整窗。
-        // 透视页已有 16 行，330 会把最后三项挤进滚动区，抬到 400 后基本一屏可见。
-        scroll->setMinimumHeight(400);
+        // 透视页已有 17 行，抬到 430 才能让最后一项也留在一屏内。
+        scroll->setMinimumHeight(430);
         auto* list = new QWidget(scroll);
         auto* listLayout = new QVBoxLayout(list);
         listLayout->setContentsMargins(0, 0, 6, 0);
@@ -946,6 +946,8 @@ void Menu::buildUi() {
 
     espHeight_ = new ToggleSwitch(this);
     espHeight_->setChecked(initial.esp.heightIndicator);
+    espCrosshair_ = new ToggleSwitch(this);
+    espCrosshair_->setChecked(initial.esp.crosshairInfo);
 
     espRadarPos_ = posCombo(this, initial.esp.radarPos);
     espListPos_ = posCombo(this, initial.esp.listPos);
@@ -1113,6 +1115,7 @@ void Menu::buildUi() {
         layout->addWidget(paramRow("位置", espListPos_, parent));
     }));
     espLayout->addWidget(makeRow(espHeight_, "高度差", ""));
+    espLayout->addWidget(makeRow(espCrosshair_, "准星信息", ""));
     espLayout->addStretch(1);
 
     // ---- 页二：自瞄 ----
@@ -1274,6 +1277,7 @@ void Menu::apply() {
     next.esp.enemyList = espEnemyList_->isChecked();
     next.esp.enemyListMax = espEnemyListMax_->value();
     next.esp.heightIndicator = espHeight_->isChecked();
+    next.esp.crosshairInfo = espCrosshair_->isChecked();
     next.esp.radarPos = espRadarPos_->currentData().toInt();
     next.esp.listPos = espListPos_->currentData().toInt();
     next.esp.trail = espTrail_->isChecked();
@@ -1401,6 +1405,7 @@ void Menu::syncFrom(const Config& config) {
     espEnemyList_->setChecked(config.esp.enemyList);
     espEnemyListMax_->setValue(config.esp.enemyListMax);
     espHeight_->setChecked(config.esp.heightIndicator);
+    espCrosshair_->setChecked(config.esp.crosshairInfo);
     espRadarPos_->setCurrentIndex(
         std::clamp(espRadarPos_->findData(config.esp.radarPos), 0, 4));
     espListPos_->setCurrentIndex(std::clamp(espListPos_->findData(config.esp.listPos), 0, 4));

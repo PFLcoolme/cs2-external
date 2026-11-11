@@ -78,6 +78,7 @@ private:
     QCheckBox* espEnemyList_{nullptr};
     QSpinBox* espEnemyListMax_{nullptr};
     QCheckBox* espHeight_{nullptr};
+    QCheckBox* espCrosshair_{nullptr};
     QComboBox* espRadarPos_{nullptr};
     QComboBox* espListPos_{nullptr};
     QCheckBox* espTrail_{nullptr};

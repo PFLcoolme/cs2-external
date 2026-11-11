@@ -206,6 +206,7 @@ Config Config::load(const std::string& path) {
         cfg.esp.enemyListMax = asInt(o, "enemyListMax", cfg.esp.enemyListMax);
         cfg.esp.heightIndicator =
             o.value("heightIndicator").toBool(cfg.esp.heightIndicator);
+        cfg.esp.crosshairInfo = o.value("crosshairInfo").toBool(cfg.esp.crosshairInfo);
         cfg.esp.radarPos = asInt(o, "radarPos", cfg.esp.radarPos);
         cfg.esp.listPos = asInt(o, "listPos", cfg.esp.listPos);
         cfg.esp.trail = o.value("trail").toBool(cfg.esp.trail);
@@ -294,6 +295,7 @@ void Config::save(const std::string& path) const {
     espObj["enemyList"] = esp.enemyList;
     espObj["enemyListMax"] = esp.enemyListMax;
     espObj["heightIndicator"] = esp.heightIndicator;
+    espObj["crosshairInfo"] = esp.crosshairInfo;
     espObj["radarPos"] = esp.radarPos;
     espObj["listPos"] = esp.listPos;
     espObj["trail"] = esp.trail;

@@ -82,6 +82,7 @@ struct EspConfig {
     bool enemyList{false};   // 右侧敌人列表：按距离排序，补远处方框看不清
     int enemyListMax{5};     // 列表最多显示行数
     bool heightIndicator{false};  // 目标与本地的高度差（▲ 楼上 / ▼ 楼下）
+    bool crosshairInfo{false};    // 准星指向的敌人：在准星旁显示血量与距离
     // HUD 位置：0 底部居中 / 1 左上 / 2 右上 / 3 左下 / 4 右下
     int radarPos{0};
     int listPos{2};

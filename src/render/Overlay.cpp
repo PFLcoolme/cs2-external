@@ -498,6 +498,27 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         }
     }
 
+    // ---- 准星目标信息：准星指向谁，就在准星右下角标出血量与距离 ----
+    if (config->esp.crosshairInfo && snapshot.crosshairIndex >= 0) {
+        for (const PlayerInfo& player : snapshot.players) {
+            if (player.index != snapshot.crosshairIndex) continue;
+            if (player.health <= 0) break;
+
+            // 颜色沿用敌我语义色，残血再切红，和血条判断一致。
+            QColor accent = player.team == 2 ? QColor(230, 162, 60) : QColor(74, 144, 226);
+            if (player.health <= 30) accent = QColor(240, 90, 90);
+            painter.setPen(accent);
+            const QString text = QString("%1 hp · %2 m")
+                                     .arg(player.health)
+                                     .arg(static_cast<int>(std::lround(player.distance)));
+            painter.drawText(
+                QRectF(static_cast<float>(width()) * 0.5f + 20.f,
+                       static_cast<float>(height()) * 0.5f + 16.f, 170.f, 16.f),
+                Qt::AlignLeft | Qt::AlignVCenter, text);
+            break;
+        }
+    }
+
     // 本帧统计交给面板：一眼看出是「没敌人」还是「被过滤」。
     state_.espSeen.store(static_cast<int>(snapshot.players.size()));
     state_.espDrawn.store(drawnCount_);

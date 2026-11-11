@@ -99,6 +99,7 @@
     "enemyList": false,
     "enemyListMax": 5,
     "heightIndicator": false,
+    "crosshairInfo": false,
     "radarPos": 0,
     "listPos": 2,
     "trail": false,
