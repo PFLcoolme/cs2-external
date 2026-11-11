@@ -412,10 +412,16 @@ public:
 
     int code() const { return code_; }
 
+    // 绑定值变化时回调：让面板立刻落盘，而不是等收起参数区。
+    // 键位是「按一下就想用」的东西，多一步保存很容易漏。
+    std::function<void()> onChanged;
+
     void setCode(int code) {
+        const bool changed = code != code_;
         code_ = code;
         capturing_ = false;
         setText(describeKey(code_));
+        if (changed && onChanged) onChanged();
     }
 
 protected:
@@ -900,7 +906,9 @@ void Menu::buildUi() {
     aimSensitivity_->setValue(initial.aim.sensitivityFactor);
     aimSensitivity_->setFixedWidth(84);
     aimScopeKey_ = makeKeyBind(this, initial.aim.scopeKey);
+    aimScopeKey_->onChanged = [this] { apply(); };
     aimFireKey_ = makeKeyBind(this, initial.aim.fireKey);
+    aimFireKey_->onChanged = [this] { apply(); };
 
     recoilEnabled_ = new ToggleSwitch(this);
     recoilEnabled_->setChecked(initial.recoil.enabled);
@@ -933,6 +941,7 @@ void Menu::buildUi() {
     trackSmooth_->setValue(initial.track.smooth);
     trackSmooth_->setFixedWidth(66);
     trackKey_ = makeKeyBind(this, initial.track.key);
+    trackKey_->onChanged = [this] { apply(); };
 
     triggerEnabled_ = new ToggleSwitch(this);
     triggerEnabled_->setChecked(initial.trigger.enabled);
@@ -947,6 +956,7 @@ void Menu::buildUi() {
     triggerCooldown_->setValue(initial.trigger.cooldownMs);
     triggerCooldown_->setFixedWidth(82);
     triggerKey_ = makeKeyBind(this, initial.trigger.key);
+    triggerKey_->onChanged = [this] { apply(); };
 
     silentEnabled_ = new ToggleSwitch(this);
     silentEnabled_->setChecked(initial.silent.enabled);
@@ -964,6 +974,7 @@ void Menu::buildUi() {
     silentHold_->setValue(initial.silent.holdMs);
     silentHold_->setFixedWidth(82);
     silentKey_ = makeKeyBind(this, initial.silent.key);
+    silentKey_->onChanged = [this] { apply(); };
 
     // 参数控件直接挂在各行下方的下拉区里，不再需要临时隐藏容器。
 
