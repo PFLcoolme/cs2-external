@@ -378,13 +378,35 @@ sudo ./build/cs2_lite                        # 以 root 运行
 | 弹层 | `Menu::attachParams()` / `ensurePopup()` | `Qt::Popup` 子窗口，行与勾选框都挂 `CustomContextMenu`；首次右键惰性构建并缓存到 `QHash<QString, QWidget*> popups_`，之后再右键只 `move/show/raise` |
 | 落盘 | `Menu::eventFilter()` | 监听弹层 `QEvent::Hide` → `apply()`；弹层一关即写 `config.json`，不必回底部点保存 |
 | 控件归属 | `buildUi()` | 所有参数控件在构造期一次创建（父为 `Menu`），由弹层布局接管；`apply()` / `syncFrom()` 字段对应关系不变 |
+| 面板底板 | `Menu::paintEvent()` / `resizeEvent()` | 本机 X 会话无合成器（`_NET_WM_CM_S0` 缺失），ARGB 半透明窗口的透明区会直接贴屏成未初始化像素；改为不透明底色 + `setMask()` 圆角裁切 |
+| 参数控件归属 | `buildUi()` | 只存在于弹层里的 `QSpinBox` / `QDoubleSpinBox` / `QComboBox` / `QCheckBox` 先收进隐藏容器 `paramHolder`，避免首次右键前堆在面板 `(0,0)` 画成一片 |
 
-依赖 API：`QScrollArea`、`QWidget(Qt::Popup)`、`QEvent::Hide`、`QWidget::customContextMenuRequested`、`QWidget::mapToGlobal`。
+依赖 API：`QScrollArea`、`QWidget(Qt::Popup)`、`QEvent::Hide`、`QWidget::customContextMenuRequested`、`QWidget::mapToGlobal`、`QWidget::setMask()` / `QRegion`。
 
 潜在风险：
 
 - `Qt::Popup` 在部分合成器下会单独占一个覆盖窗口；无合成器的 X11 为普通子窗口，焦点丢失由 Qt 自己处理。
 - 弹层关闭才落盘：只改勾选框、既不开弹层也不点「应用并保存」时不会写入，底部按钮仍保留为兜底路径。
 - 透视页 13 行约 325 px，刚好在 330 px 内；再增加功能行时该页会出现竖向滚动。
+- 不透明底板牺牲了玻璃质感，换取无合成器环境下的可读性；若日后确认会话有合成器，可再恢复半透明分支。
 
 兼容范围：Qt6 Widgets（X11 / Wayland 均可，弹层为纯 Qt 控件，不依赖 XTest）。
+
+## 20. 阶段二十六：左上角控件堆叠修复
+
+需求目标：面板左上角出现「一堆按键糊一块」的残影，横排类别栏后仍未消失，需要定位真因并修掉。
+
+实现方式：
+
+| 项 | 变更点 | 说明 |
+| --- | --- | --- |
+| 参数控件 | `Menu::buildUi()` | 只在右键弹层里使用的 25 个参数控件，构造后统一 `setParent(paramHolder)`（`Menu` 下隐藏容器），首次右键由 `paramRow()` 重新挂到弹层行上 |
+| 面板底板 | `Menu::paintEvent()` + `Menu::resizeEvent()` | 去掉 `WA_TranslucentBackground`，改为不透明 `(15,17,19)` 填充 + 1px 圆角描边；圆角用 `QPainterPath` → `setMask(QRegion)` 裁切 |
+| 声明 | `Menu.h` | 新增 `resizeEvent()` 覆写 |
+
+依赖 API：`QWidget::setParent()`、`QWidget::setMask()`、`QRegion`、`QPainterPath::addRoundedRect()`。
+
+潜在风险：
+
+- 底图不再透明，玻璃质感消失；本机无合成器（`_NET_WM_CM_S0` 缺失），透明反而会露出未初始化像素。
+- 参数控件由隐藏容器托管，若后续把它们直接放进页面需改回常规父子关系。

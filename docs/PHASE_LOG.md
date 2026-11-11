@@ -960,3 +960,39 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 2. 透视页 13 行 ≈325 px 已贴近 330 px 下限，再加功能行会出现竖向滚动。
 3. `Qt::Popup` 弹层位置跟行绑定，窗口拖到屏幕下缘时可能被裁；当前未做翻转/夹取。
 4. Xvfb 下曾残留一个 root 权限的历史实例（`kill` 被拒），它会用旧配置写 `build/config.json`；验证时改用独立 display `:98` 规避。
+
+# 阶段二十六：左上角按键糊成一团的真因修复
+
+## 1. 需求
+
+「左上角有一堆按键湖一块」→ 横排类别栏后仍「还是有」。
+
+## 2. 定位过程
+
+- 先排除叠加层：`Overlay::paintEvent()` 只绘制敌人框 / 血量文字 / 骨骼 / 伤害浮字 / 残影 / 底部居中雷达，顶部无任何绘制。
+- 再排除状态文案：`Game::setStatus()` 只有「已连接 pid=…」「偏移缺失: …」等短句。
+- Xvfb `:98` 截图 + PIL 逐像素分析：面板 `440x553+419+123`，在 `x 0..35 / y 8..29` 有一块白色圆角矩形和叠在一起的白色字形，位置与任何布局项都不重合。
+- 二分验证：用 `WV_HIDE` 临时隐藏 `findChildren<QWidget*>()` 后同一区域变空 → 该内容确由子控件绘制。
+- 打印 `mapToGlobal()` 几何后坐实：`espRadarRange_`、`espDamageMs_`、`espDamageColor_`、`aimStrategy_`、`aimSmooth_`、`recoilStrength_`、`trackFov_`、`triggerDelay_`、`silentFov_` 等 25 个参数控件全部 `vis=1`、`local=0,0`、`30 px` 高，叠在面板左上角。
+- 根因：这些控件构造时父对象是 `Menu`，而它们只在右键弹层里使用，弹层是首次右键才惰性构建的；在那之前没有任何布局接管它们，Qt 就把它们画在 `(0,0)`。
+- 附带发现：本机 `:0` 没有合成器（`xprop -root _NET_WM_CM_S0` 无结果），`WA_TranslucentBackground` 的透明区域会被直接贴屏，画面上同样会留下不可控残影。
+
+## 3. 实现
+
+- `src/ui/Menu.cpp` `buildUi()`：参数控件构造后统一 `setParent(paramHolder)`，`paramHolder` 是 `Menu` 下 `hide()` 的容器；首次右键时 `paramRow()` 把它们加进弹层布局，由 Qt 重新 reparent 到弹层行上。
+- `src/ui/Menu.cpp`：去掉 `WA_TranslucentBackground`；`paintEvent()` 先 `fillRect` 不透明底色 `(15,17,19)` 再画 1px 圆角描边；新增 `resizeEvent()` 用 `QPainterPath + setMask(QRegion)` 裁圆角，不依赖合成器。
+- `src/ui/Menu.h`：新增 `resizeEvent()` 声明。
+
+## 4. 验证结果
+
+- 构建：`cmake --build build -j8` 成功，0 warning / 0 error。
+- 左上角：Xvfb `:98` 截图，`y 0..30 / x 0..70` 区域除 1px 描边外全为底色 `(15,17,19)`，无任何叠字。
+- 行表：首行文本带 `y 132..146`，行距 26 px，13 行依次排到 `444..456`，与修复前一致。
+- 右键弹层：伤害浮字行 `(519,496)` 右键 → 新窗口 `258x147+519+496`，内含「显示时长」spinbox 与「颜色」combo，控件正常显示在弹层内（reparent 生效）。
+- 首次启动无弹层时窗口树只有 `1x1` 叠加层、`440x553` 面板与 Qt Selection Owner 三个窗口，无游离控件窗口。
+
+## 5. 遗留风险
+
+1. 不透明底板：无合成器环境下这是唯一稳的画法，玻璃质感丢失。
+2. `paramHolder` 只做托管，不在布局里；若将来把参数控件直接放进页面，需要改回正常父子关系。
+3. 行表贴近 330 px 下限的问题未变，再加行仍会出现竖向滚动。

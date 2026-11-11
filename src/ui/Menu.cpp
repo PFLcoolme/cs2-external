@@ -17,7 +17,9 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPlainTextEdit>
+#include <QRegion>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
@@ -245,7 +247,9 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
     // 无边框 + 透明底：整块面板由 paintEvent 画成圆角玻璃，WM 不再画标题栏。
     // 无边框后没有标题栏可点回前台，必须自己置顶，否则被 IDE / 浏览器整块盖住。
     setWindowFlags(Qt::FramelessWindowHint | Qt::Window | Qt::WindowStaysOnTopHint);
-    setAttribute(Qt::WA_TranslucentBackground, true);
+    // 不使用 WA_TranslucentBackground：本机 X 会话没有合成器（_NET_WM_CM_S0 缺失），
+    // ARGB 窗口的透明区域会被直接贴屏，显示成未初始化像素——即左上角那团糊在一起的残影。
+    // 改为不透明窗口，圆角用 XShape 遮罩裁出来。
     setFixedWidth(440);
     setStyleSheet(kStyle);
     buildUi();
@@ -281,12 +285,21 @@ void Menu::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    const QRectF panel = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    // 不透明底色：无合成器环境下这是唯一能保证内容可读的画法。
+    painter.fillRect(rect(), QColor(15, 17, 19, 255));
 
-    // 背景完全透明：不填充、不做高光，只留一圈 1px 圆角线框界定可拖动区域。
+    const QRectF panel = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     painter.setPen(QPen(QColor(255, 255, 255, 56), 1.0));
     painter.setBrush(Qt::NoBrush);
     painter.drawRoundedRect(panel, 14.0, 14.0);
+}
+
+void Menu::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    // 圆角靠窗口遮罩实现（XShape），不依赖合成器；四角直接被裁掉而不是画成透明。
+    QPainterPath path;
+    path.addRoundedRect(QRectF(rect()), 14.0, 14.0);
+    setMask(QRegion(path.toFillPolygon().toPolygon()));
 }
 
 void Menu::showEvent(QShowEvent* event) {
@@ -613,6 +626,19 @@ void Menu::buildUi() {
     silentHold_->setValue(initial.silent.holdMs);
     silentHold_->setFixedWidth(82);
     silentKey_ = mouseKeyCombo(this, initial.silent.key);
+
+    // 参数控件只存在于右键弹层里。弹层是首次右键才创建的，在那之前它们仍挂在面板上，
+    // 全部堆在 (0,0) 画出来就是左上角那团糊在一起的按键。这里先收进一个隐藏容器，
+    // 等 paramRow() 把它们加进弹层时再由 Qt 重新挂到弹层行上。
+    auto* paramHolder = new QWidget(this);
+    paramHolder->hide();
+    const std::initializer_list<QWidget*> paramControls{
+        espRadarRange_, espTrailMs_, espDamageMs_, espDamageColor_, aimStrategy_, aimSmooth_,
+        aimFov_,       aimSensitivity_, aimScopeKey_, aimFireKey_, aimTeam_,  recoilStrength_,
+        recoilMax_,    recoilRequireFire_, trackFov_, trackSmooth_, trackKey_, trackTeam_,
+        triggerDelay_, triggerCooldown_, triggerKey_, silentFov_, silentHold_, silentKey_,
+        silentTeam_};
+    for (QWidget* control : paramControls) control->setParent(paramHolder);
 
     // ---- 页一：透视 ----
     QVBoxLayout* espLayout = addPage();
