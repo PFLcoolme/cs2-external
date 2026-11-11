@@ -1,9 +1,11 @@
 #pragma once
+#include <QPointF>
 #include <QTimer>
 #include <QWidget>
 
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <map>
 
 #include "core/Config.h"
@@ -31,6 +33,12 @@ private:
         std::chrono::steady_clock::time_point at{};
     };
 
+    // 残影轨迹点：脚底屏幕坐标 + 采样时刻，超出 trailMs 的头部逐帧丢弃。
+    struct TrailPoint {
+        QPointF at;
+        std::chrono::steady_clock::time_point when{};
+    };
+
     void tick();
     std::uintptr_t findGameWindow() const;
     void applyInputPassthrough();
@@ -48,6 +56,7 @@ private:
     std::chrono::steady_clock::time_point lastPaint_{};
     std::map<int, int> lastHealth_;          // 实体序号 → 上一帧血量
     std::map<int, DamageMark> damageMarks_;  // 实体序号 → 待绘制的掉血浮字
+    std::map<int, std::deque<TrailPoint>> trails_;  // 实体序号 → 残影轨迹
     QTimer timer_;
 };
 

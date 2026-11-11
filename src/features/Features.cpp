@@ -148,6 +148,10 @@ void Features::run() {
             (config->trigger.key <= 0 || buttonDown(display, config->trigger.key))) {
             triggerStep(display, *config, snapshot);
         }
+        // 后坐力抵消独立于自瞄：即使自瞄关闭，也按开火状态反向补偿视角。
+        if (config->recoil.enabled && (!config->recoil.requireFire || fireHeld)) {
+            recoilStep(display, *config, snapshot, attributes.height);
+        }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(kLoopIntervalMs));
     }
@@ -368,6 +372,37 @@ void Features::triggerStep(void* displayPtr, const Config& config, const Snapsho
 
     nextTrigger_ = std::chrono::steady_clock::now() +
                    std::chrono::milliseconds(std::max(1, config.trigger.cooldownMs));
+}
+
+void Features::recoilStep(void* displayPtr, const Config& config, const Snapshot& snapshot,
+                          int height) {
+    Display* display = static_cast<Display*>(displayPtr);
+    const float punchX = snapshot.aimPunch.x;
+    const float punchY = snapshot.aimPunch.y;
+    const float limit = std::max(1.f, config.recoil.maxDegrees);
+
+    // 越界即视为读到垃圾值（换枪 / 瞬移 / 指针错位）：丢弃本帧并把基准归零。
+    if (std::fabs(punchX) > limit || std::fabs(punchY) > limit) {
+        lastPunch_ = {};
+        return;
+    }
+
+    // 只补偿「本帧新增」的角度：绝对值每帧重发会在压枪时过转，
+    // 且停火后 punch 回落的过程会被持续反向追打。
+    const float deltaX = punchX - lastPunch_.x;
+    const float deltaY = punchY - lastPunch_.y;
+    lastPunch_ = Vec2{punchX, punchY};
+    if (std::fabs(deltaX) > limit || std::fabs(deltaY) > limit) return;
+
+    // 竖直 90° 视场近似：一屏高 ≈ 90°，与 aimStep 共用同一个 XTest 相对位移通道。
+    const float pixelsPerDegree = static_cast<float>(std::max(1, height)) / 90.f;
+    const float k = pixelsPerDegree * config.recoil.strength;
+    const int moveX = static_cast<int>(std::lround(-deltaY * k));
+    const int moveY = static_cast<int>(std::lround(deltaX * k));
+    if (moveX == 0 && moveY == 0) return;
+
+    XTestFakeRelativeMotionEvent(display, moveX, moveY, CurrentTime);
+    XFlush(display);
 }
 
 }  // namespace wv

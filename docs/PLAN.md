@@ -266,3 +266,19 @@ sudo ./build/cs2_lite                        # 以 root 运行
 
 `Game::resolveOffsets()` 的缺失判定同步放宽：`m_modelState == 0` 不再并入「偏移缺失」，只降级提示「骨骼偏移缺失，连线不可用」，方框与血量照常。
 
+---
+
+## 15. 阶段二十一：后坐力抵消与五项交互增强
+
+| 功能 | 依赖 | 实现要点 |
+|---|---|---|
+| 后坐力抵消 | `m_aimPunchAngle`（缺失时退回 `m_aimPunchCache`） | `Game` 每帧读 punch 角度进 `Snapshot::aimPunch`；`Features::recoilStep()` 只补偿帧间增量，`maxDegrees` 之外视为脏数据丢弃；强度可为负值以翻转方向 |
+| 热键重绑定 | 无 | 面板下拉改写 `aim.scopeKey` / `aim.fireKey` / `trigger.key`；X11 核心协议只暴露 Button1~5，故仅提供 不限/左键/中键/右键 |
+| 掉血浮字时长与颜色 | 无 | `esp.damageMs` / `esp.damageColor`，颜色用 4 档预设避免自造取色器 |
+| 残血描边 | 无 | `esp.highlight`，取本帧可绘制敌人中的最低血量者画外框；准星目标白框优先 |
+| 残影轨迹 | 无 | `esp.trail` / `esp.trailMs`，按实体序号缓存脚底屏幕坐标，窗口外逐点淘汰 |
+
+配置层同步：`Config::RecoilConfig`、`EspConfig` 新增四个字段、`Offsets` 新增两个 punch 字段、`OffsetsImporter` 新增两条绑定、`tools/cs2_linux_offsets.py` 增加 `maybe_any()` 可选探测（未命中不终止生成，只打印 `recoil disabled`）。
+
+面板状态行新增 4 秒驻留：`persist()` 的提示此前会被 400 ms 的连接状态轮询立刻覆盖，用户看不到「已保存」或「后坐力偏移缺失」。
+

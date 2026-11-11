@@ -526,6 +526,19 @@ def main():
     m_bSpotted = m_entitySpottedState + m_bSpotted_local
     print(f"[field] m_bSpotted = {m_bSpotted} ({m_bSpotted:#x}) "
           f"= m_entitySpottedState + m_bSpotted")
+    def maybe_any(classes, name):
+        """可选字段：命中返回偏移，未命中返回 None 且不终止生成。
+        后坐力抵消依赖这两个字段，缺失时功能在客户端侧自动关闭。"""
+        for cls in classes:
+            off = fields.get(cls, {}).get(name)
+            if off is not None:
+                print(f"[field] {cls}.{name} = {off} ({off:#x})")
+                return off
+        print(f"[field] {name} not present in schema (recoil disabled)")
+        return None
+
+    m_aimPunchAngle = maybe_any(["C_CSPlayerPawnBase", "C_CSPlayerPawn"], "m_aimPunchAngle")
+    m_aimPunchCache = maybe_any(["C_CSPlayerPawnBase", "C_CSPlayerPawn"], "m_aimPunchCache")
     m_bIsLocalPlayerController = need("CBasePlayerController", "m_bIsLocalPlayerController")
     m_hPlayerPawn = need("CCSPlayerController", "m_hPlayerPawn")
     m_hController = need("C_BasePlayerPawn", "m_hController")
@@ -670,6 +683,8 @@ def main():
         "m_vecAbsOrigin": m_vecAbsOrigin,
         "m_iIDEntIndex": m_iIDEntIndex,
         "m_bSpotted": m_bSpotted,
+        "m_aimPunchAngle": m_aimPunchAngle or 0,
+        "m_aimPunchCache": m_aimPunchCache or 0,
     }
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)

@@ -22,6 +22,16 @@ struct AimbotConfig {
     int strategy{0};
 };
 
+struct RecoilConfig {
+    bool enabled{false};
+    // 补偿强度：正负决定方向。鼠标位移 = (-punch.y, +punch.x) * 像素/度 * strength，
+    // 若实机方向相反，把本值改成负数即可，无需改代码。
+    float strength{0.6f};
+    // 单帧补偿角上限：超过视为数据异常（换枪 / 瞬移 / 读错指针）直接跳过。
+    float maxDegrees{12.f};
+    bool requireFire{true};  // 只在开火键按住时补偿
+};
+
 struct TriggerConfig {
     bool enabled{false};
     int key{0};  // 0 = 不使用按键（仅准星判定）
@@ -41,6 +51,11 @@ struct EspConfig {
     bool skeleton{false};
     bool radar{false};  // 2D 雷达（固定北向，底部居中）
     float radarRange{40.f};  // 雷达半径对应的世界距离（米）
+    bool trail{false};       // 残影轨迹：脚底屏幕坐标的历史折线
+    int trailMs{220};        // 轨迹保留时长（毫秒）
+    bool highlight{false};   // 最低血量目标描边（准星目标仍用白框）
+    int damageMs{800};       // 掉血浮字保留时长（毫秒）
+    int damageColor{0xFF8460};  // 掉血浮字颜色（0xRRGGBB）
     bool teamCheck{false};
     bool visibilityCheck{true};
     float maxDistance{0.f};
@@ -54,6 +69,7 @@ struct Config {
     std::string offsetsSource{"config.json 内嵌"};
     Offsets offsets;
     AimbotConfig aim;
+    RecoilConfig recoil;
     TriggerConfig trigger;
     EspConfig esp;
 

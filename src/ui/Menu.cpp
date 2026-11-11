@@ -171,6 +171,20 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 )QSS";
 
+// 鼠标键下拉：X11 核心协议只暴露 Button1~Button5，侧键不在掩码内，
+// 因此只提供 不限 / 左键 / 中键 / 右键，避免给出按键位却读不到状态。
+QComboBox* mouseKeyCombo(QWidget* parent, int value) {
+    auto* combo = new QComboBox(parent);
+    combo->addItem("不限", 0);
+    combo->addItem("左键", 1);
+    combo->addItem("中键", 2);
+    combo->addItem("右键", 3);
+    const int index = combo->findData(value);
+    combo->setCurrentIndex(index >= 0 ? index : 0);
+    combo->setFixedWidth(78);
+    return combo;
+}
+
 QLabel* fieldLabel(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text, parent);
     label->setObjectName("field");
@@ -223,7 +237,9 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
     auto timer = new QTimer(this);
     timer->setInterval(400);
     connect(timer, &QTimer::timeout, this, [this] {
-        if (status_) status_->setText(QString::fromStdString(game_.status()));
+        if (status_ && QDateTime::currentDateTime() >= messageUntil_) {
+            status_->setText(QString::fromStdString(game_.status()));
+        }
 
         // 日志页可见时才读文件，其他页面零开销。
         if (pages_ && logView_ && pages_->currentIndex() == 3) {
@@ -396,6 +412,47 @@ void Menu::buildUi() {
     radarRow->addWidget(fieldLabel("半径", this));
     radarRow->addWidget(espRadarRange_);
     espPageLayout->addLayout(radarRow);
+
+    // 残影轨迹 + 最低血量描边：只用屏幕坐标与已有血量，不依赖新偏移。
+    auto* effectRow = new QHBoxLayout();
+    effectRow->setSpacing(8);
+    espTrail_ = new QCheckBox("残影轨迹", this);
+    espTrail_->setChecked(initial.esp.trail);
+    espTrailMs_ = new QSpinBox(this);
+    espTrailMs_->setRange(50, 1000);
+    espTrailMs_->setSuffix(" ms");
+    espTrailMs_->setValue(initial.esp.trailMs);
+    espTrailMs_->setFixedWidth(80);
+    espHighlight_ = new QCheckBox("残血描边", this);
+    espHighlight_->setChecked(initial.esp.highlight);
+    effectRow->addWidget(espTrail_);
+    effectRow->addWidget(espTrailMs_);
+    effectRow->addWidget(espHighlight_);
+    effectRow->addStretch(1);
+    espPageLayout->addLayout(effectRow);
+
+    // 掉血浮字：保留时长与颜色可调。
+    espDamageMs_ = new QSpinBox(this);
+    espDamageMs_->setRange(100, 3000);
+    espDamageMs_->setSuffix(" ms");
+    espDamageMs_->setValue(initial.esp.damageMs);
+    espDamageMs_->setFixedWidth(84);
+    espDamageColor_ = new QComboBox(this);
+    espDamageColor_->addItem("橙红", 0xFF8460);
+    espDamageColor_->addItem("纯白", 0xFFFFFF);
+    espDamageColor_->addItem("亮黄", 0xFFD24A);
+    espDamageColor_->addItem("青蓝", 0x6CC8FF);
+    const int colorIndex = espDamageColor_->findData(initial.esp.damageColor);
+    espDamageColor_->setCurrentIndex(colorIndex >= 0 ? colorIndex : 0);
+    espDamageColor_->setFixedWidth(78);
+    auto* damageRow = new QHBoxLayout();
+    damageRow->setSpacing(8);
+    damageRow->addWidget(fieldLabel("浮字", this));
+    damageRow->addWidget(espDamageMs_);
+    damageRow->addWidget(espDamageColor_);
+    damageRow->addStretch(1);
+    espPageLayout->addLayout(damageRow);
+
     espPageLayout->addStretch(1);
     pages_->addWidget(espPage);
 
@@ -451,6 +508,51 @@ void Menu::buildUi() {
     aimGrid->addWidget(aimSensitivity_, 2, 1);
     aimGrid->setColumnStretch(4, 1);
     aimPageLayout->addLayout(aimGrid);
+
+    // 快捷键：开镜 / 开火。原来只能改 JSON，这里做成下拉。
+    aimScopeKey_ = mouseKeyCombo(this, initial.aim.scopeKey);
+    aimFireKey_ = mouseKeyCombo(this, initial.aim.fireKey);
+    auto* aimKeyRow = new QHBoxLayout();
+    aimKeyRow->setSpacing(8);
+    aimKeyRow->addWidget(fieldLabel("开镜键", this));
+    aimKeyRow->addWidget(aimScopeKey_);
+    aimKeyRow->addWidget(fieldLabel("开火键", this));
+    aimKeyRow->addWidget(aimFireKey_);
+    aimKeyRow->addStretch(1);
+    aimPageLayout->addLayout(aimKeyRow);
+
+    // 后坐力抵消：独立于自瞄，取 m_aimPunchAngle（缺失时退回 m_aimPunchCache）。
+    auto* recoilToggles = new QHBoxLayout();
+    recoilToggles->setSpacing(10);
+    recoilEnabled_ = new QCheckBox("后坐力抵消", this);
+    recoilEnabled_->setChecked(initial.recoil.enabled);
+    recoilRequireFire_ = new QCheckBox("仅开火时", this);
+    recoilRequireFire_->setChecked(initial.recoil.requireFire);
+    recoilToggles->addWidget(recoilEnabled_);
+    recoilToggles->addWidget(recoilRequireFire_);
+    recoilToggles->addStretch(1);
+    aimPageLayout->addLayout(recoilToggles);
+
+    recoilStrength_ = new QDoubleSpinBox(this);
+    recoilStrength_->setRange(-3.0, 3.0);
+    recoilStrength_->setSingleStep(0.1);
+    recoilStrength_->setDecimals(2);
+    recoilStrength_->setValue(initial.recoil.strength);
+    recoilStrength_->setFixedWidth(70);
+    recoilMax_ = new QSpinBox(this);
+    recoilMax_->setRange(1, 60);
+    recoilMax_->setSuffix(" °");
+    recoilMax_->setValue(static_cast<int>(initial.recoil.maxDegrees));
+    recoilMax_->setFixedWidth(70);
+    auto* recoilRow = new QHBoxLayout();
+    recoilRow->setSpacing(8);
+    recoilRow->addWidget(fieldLabel("强度", this));
+    recoilRow->addWidget(recoilStrength_);
+    recoilRow->addWidget(fieldLabel("上限", this));
+    recoilRow->addWidget(recoilMax_);
+    recoilRow->addStretch(1);
+    aimPageLayout->addLayout(recoilRow);
+
     aimPageLayout->addStretch(1);
     pages_->addWidget(aimPage);
 
@@ -485,6 +587,15 @@ void Menu::buildUi() {
     triggerGrid->addWidget(triggerCooldown_, 0, 3);
     triggerGrid->setColumnStretch(4, 1);
     triggerPageLayout->addLayout(triggerGrid);
+
+    triggerKey_ = mouseKeyCombo(this, initial.trigger.key);
+    auto* triggerKeyRow = new QHBoxLayout();
+    triggerKeyRow->setSpacing(8);
+    triggerKeyRow->addWidget(fieldLabel("触发键", this));
+    triggerKeyRow->addWidget(triggerKey_);
+    triggerKeyRow->addStretch(1);
+    triggerPageLayout->addLayout(triggerKeyRow);
+
     triggerPageLayout->addStretch(1);
     pages_->addWidget(triggerPage);
 
@@ -570,6 +681,11 @@ void Menu::apply() {
     next.esp.visibilityCheck = espVisibility_->isChecked();
     next.esp.radar = espRadar_->isChecked();
     next.esp.radarRange = static_cast<float>(espRadarRange_->value());
+    next.esp.trail = espTrail_->isChecked();
+    next.esp.trailMs = espTrailMs_->value();
+    next.esp.highlight = espHighlight_->isChecked();
+    next.esp.damageMs = espDamageMs_->value();
+    next.esp.damageColor = espDamageColor_->currentData().toInt();
 
     next.aim.enabled = aimEnabled_->isChecked();
     next.aim.strategy = aimStrategy_->currentIndex();
@@ -577,11 +693,25 @@ void Menu::apply() {
     next.aim.fovPixels = static_cast<float>(aimFov_->value());
     next.aim.sensitivityFactor = static_cast<float>(aimSensitivity_->value());
     next.aim.teamCheck = aimTeam_->isChecked();
+    next.aim.scopeKey = aimScopeKey_->currentData().toInt();
+    next.aim.fireKey = aimFireKey_->currentData().toInt();
+
+    next.recoil.enabled = recoilEnabled_->isChecked();
+    next.recoil.requireFire = recoilRequireFire_->isChecked();
+    next.recoil.strength = static_cast<float>(recoilStrength_->value());
+    next.recoil.maxDegrees = static_cast<float>(recoilMax_->value());
 
     next.trigger.enabled = triggerEnabled_->isChecked();
     next.trigger.delayMs = triggerDelay_->value();
     next.trigger.cooldownMs = triggerCooldown_->value();
+    next.trigger.key = triggerKey_->currentData().toInt();
 
+    // 后坐力依赖 punch 角度：两个偏移都缺失时明确告知，不然用户只会看到「没反应」。
+    const bool punchReady = next.offsets.m_aimPunchAngle != 0 || next.offsets.m_aimPunchCache != 0;
+    if (next.recoil.enabled && !punchReady) {
+        persist(next, "已保存 · 后坐力偏移缺失，先跑 tools/cs2_linux_offsets.py");
+        return;
+    }
     persist(next, "已保存并生效");
 }
 
@@ -609,6 +739,7 @@ void Menu::persist(const Config& config, const QString& message) {
     configStamp_ = QFileInfo(target).lastModified();
 
     if (status_) status_->setText(message);
+    messageUntil_ = QDateTime::currentDateTime().addSecs(4);
 }
 
 void Menu::restoreLast() {
@@ -646,6 +777,12 @@ void Menu::syncFrom(const Config& config) {
     espVisibility_->setChecked(config.esp.visibilityCheck);
     espRadar_->setChecked(config.esp.radar);
     espRadarRange_->setValue(static_cast<int>(config.esp.radarRange));
+    espTrail_->setChecked(config.esp.trail);
+    espTrailMs_->setValue(config.esp.trailMs);
+    espHighlight_->setChecked(config.esp.highlight);
+    espDamageMs_->setValue(config.esp.damageMs);
+    const int colorIndex = espDamageColor_->findData(config.esp.damageColor);
+    espDamageColor_->setCurrentIndex(colorIndex >= 0 ? colorIndex : 0);
 
     aimEnabled_->setChecked(config.aim.enabled);
     aimStrategy_->setCurrentIndex(std::clamp(config.aim.strategy, 0, 2));
@@ -653,10 +790,21 @@ void Menu::syncFrom(const Config& config) {
     aimFov_->setValue(static_cast<int>(config.aim.fovPixels));
     aimSensitivity_->setValue(config.aim.sensitivityFactor);
     aimTeam_->setChecked(config.aim.teamCheck);
+    const int scopeIndex = aimScopeKey_->findData(config.aim.scopeKey);
+    aimScopeKey_->setCurrentIndex(scopeIndex >= 0 ? scopeIndex : 0);
+    const int fireIndex = aimFireKey_->findData(config.aim.fireKey);
+    aimFireKey_->setCurrentIndex(fireIndex >= 0 ? fireIndex : 0);
+
+    recoilEnabled_->setChecked(config.recoil.enabled);
+    recoilRequireFire_->setChecked(config.recoil.requireFire);
+    recoilStrength_->setValue(config.recoil.strength);
+    recoilMax_->setValue(static_cast<int>(config.recoil.maxDegrees));
 
     triggerEnabled_->setChecked(config.trigger.enabled);
     triggerDelay_->setValue(config.trigger.delayMs);
     triggerCooldown_->setValue(config.trigger.cooldownMs);
+    const int keyIndex = triggerKey_->findData(config.trigger.key);
+    triggerKey_->setCurrentIndex(keyIndex >= 0 ? keyIndex : 0);
 }
 
 }  // namespace wv

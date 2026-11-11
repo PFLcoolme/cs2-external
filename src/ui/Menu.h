@@ -55,6 +55,11 @@ private:
     QCheckBox* espSkeleton_{nullptr};
     QCheckBox* espRadar_{nullptr};
     QSpinBox* espRadarRange_{nullptr};
+    QCheckBox* espTrail_{nullptr};
+    QSpinBox* espTrailMs_{nullptr};
+    QCheckBox* espHighlight_{nullptr};
+    QSpinBox* espDamageMs_{nullptr};
+    QComboBox* espDamageColor_{nullptr};
     QCheckBox* espTeam_{nullptr};
     QCheckBox* espVisibility_{nullptr};
 
@@ -64,10 +69,18 @@ private:
     QSpinBox* aimFov_{nullptr};
     QDoubleSpinBox* aimSensitivity_{nullptr};
     QCheckBox* aimTeam_{nullptr};
+    QComboBox* aimScopeKey_{nullptr};
+    QComboBox* aimFireKey_{nullptr};
+
+    QCheckBox* recoilEnabled_{nullptr};
+    QDoubleSpinBox* recoilStrength_{nullptr};
+    QSpinBox* recoilMax_{nullptr};
+    QCheckBox* recoilRequireFire_{nullptr};
 
     QCheckBox* triggerEnabled_{nullptr};
     QSpinBox* triggerDelay_{nullptr};
     QSpinBox* triggerCooldown_{nullptr};
+    QComboBox* triggerKey_{nullptr};
 
     QLabel* status_{nullptr};
     QPushButton* tabs_[4]{nullptr, nullptr, nullptr, nullptr};
@@ -76,6 +89,9 @@ private:
 
     QPoint dragOffset_;
     QDateTime configStamp_;  // 配置文件最后修改时间，用于热重载比对
+    // 保存/恢复提示的驻留截止时间：状态行默认每 400 ms 被连接状态覆盖，
+    // 提示信息需要压过这个轮询，否则用户根本看不到「已保存」或偏移缺失警告。
+    QDateTime messageUntil_;
     bool placed_{false};
 };
 

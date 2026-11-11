@@ -251,11 +251,12 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
     };
 
     drawnCount_ = 0;
+    const auto now = std::chrono::steady_clock::now();
 
     // 掉血浮字：按实体序号比对上一帧血量。只记录「掉血」，回血或换人（序号复用）
-    // 不产生浮字；超过 1 s 或目标消失即清理，避免吃内存。
+    // 不产生浮字；超过 damageMs 或目标消失即清理，避免吃内存。
     if (config->esp.damageNumbers) {
-        const auto now = std::chrono::steady_clock::now();
+        const auto damageWindow = std::chrono::milliseconds(std::max(100, config->esp.damageMs));
         std::map<int, int> current;
         for (const PlayerInfo& player : snapshot.players) {
             current[player.index] = player.health;
@@ -266,13 +267,40 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
         }
         lastHealth_.swap(current);
         for (auto it = damageMarks_.begin(); it != damageMarks_.end();) {
-            const bool expired = now - it->second.at > std::chrono::milliseconds(1000);
+            const bool expired = now - it->second.at > damageWindow;
             const bool gone = lastHealth_.find(it->first) == lastHealth_.end();
             it = (expired || gone) ? damageMarks_.erase(it) : std::next(it);
         }
     } else {
         damageMarks_.clear();
         lastHealth_.clear();
+    }
+
+    // 残影轨迹：每帧记录脚底屏幕坐标，按 trailMs 窗口裁剪；目标消失即整条丢弃。
+    if (config->esp.trail) {
+        const auto trailWindow = std::chrono::milliseconds(std::max(50, config->esp.trailMs));
+        std::map<int, std::deque<TrailPoint>> next;
+        for (const PlayerInfo& player : snapshot.players) {
+            auto& trail = next[player.index];
+            const auto previous = trails_.find(player.index);
+            if (previous != trails_.end()) trail = previous->second;
+            trail.push_back(TrailPoint{QPointF(player.feetScreen.x, player.feetScreen.y), now});
+            while (!trail.empty() && now - trail.front().when > trailWindow) trail.pop_front();
+        }
+        trails_.swap(next);
+    } else {
+        trails_.clear();
+    }
+
+    // 最低血量目标：只统计本帧真正会绘制的敌人，供描边高亮使用。
+    int lowestHealth = 101;
+    if (config->esp.highlight) {
+        for (const PlayerInfo& player : snapshot.players) {
+            if (player.health <= 0 || player.health >= lowestHealth) continue;
+            if (config->esp.teamCheck && player.team == snapshot.localTeam) continue;
+            if (maxDistance > 0.f && player.distance > maxDistance) continue;
+            lowestHealth = player.health;
+        }
     }
 
     for (const PlayerInfo& player : snapshot.players) {
@@ -304,6 +332,11 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
             // 准星目标高亮：m_iIDEntIndex 命中谁，就给谁套一圈白框。
             if (player.index == snapshot.crosshairIndex) {
                 painter.setPen(QPen(QColor(255, 255, 255, 210), 1.0));
+                painter.drawRect(QRectF(left - 3.f, top - 3.f, width + 6.f, height + 6.f));
+                painter.setPen(boxPen);
+            } else if (config->esp.highlight && player.health == lowestHealth) {
+                // 最低血量目标：橙红外框，准星目标仍优先白框，避免两圈叠画。
+                painter.setPen(QPen(QColor(255, 96, 96, 200), 1.0));
                 painter.drawRect(QRectF(left - 3.f, top - 3.f, width + 6.f, height + 6.f));
                 painter.setPen(boxPen);
             }
@@ -341,16 +374,36 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
             painter.drawText(QPointF(player.headScreen.x - 8.f, bottom + 13.f), text);
         }
 
-        // 掉血浮字：1 s 内由头顶上浮 18 px 并淡出。
+        // 残影轨迹：脚底历史点连成折线，透明度随距离衰减，不干扰实体框。
+        if (config->esp.trail) {
+            const auto trail = trails_.find(player.index);
+            if (trail != trails_.end() && trail->second.size() >= 2) {
+                QColor trailColor = color;
+                trailColor.setAlpha(static_cast<int>(std::lround(150.f * fade)));
+                painter.setPen(QPen(trailColor, 1.2));
+                QPointF previous = trail->second.front().at;
+                for (std::size_t i = 1; i < trail->second.size(); ++i) {
+                    const QPointF current = trail->second[i].at;
+                    painter.drawLine(previous, current);
+                    previous = current;
+                }
+                painter.setPen(boxPen);
+            }
+        }
+
+        // 掉血浮字：damageMs 内由头顶上浮 18 px 并淡出，颜色取配置值。
         if (config->esp.damageNumbers) {
             const auto mark = damageMarks_.find(player.index);
             if (mark != damageMarks_.end()) {
+                const auto window = static_cast<float>(std::max(100, config->esp.damageMs));
                 const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                     std::chrono::steady_clock::now() - mark->second.at)
+                                     now - mark->second.at)
                                      .count();
-                const float progress = std::clamp(static_cast<float>(age) / 1000.f, 0.f, 1.f);
-                painter.setPen(QColor(255, 132, 96,
-                                      static_cast<int>(std::lround(255.f * (1.f - progress)))));
+                const float progress = std::clamp(static_cast<float>(age) / window, 0.f, 1.f);
+                const int rgb = config->esp.damageColor;
+                QColor damageColor((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF,
+                                   static_cast<int>(std::lround(255.f * (1.f - progress))));
+                painter.setPen(damageColor);
                 painter.drawText(QPointF(player.headScreen.x - 10.f, top - 8.f - 18.f * progress),
                                  "-" + QString::number(mark->second.amount));
                 painter.setPen(boxPen);

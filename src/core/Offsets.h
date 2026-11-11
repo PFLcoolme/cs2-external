@@ -37,6 +37,8 @@ struct Offsets {
     int m_boneArray{0};
     int m_iIDEntIndex{0};
     int m_bSpotted{0};  // 可见性：CS2 中为 1 字节 bool
+    int m_aimPunchAngle{0};  // C_CSPlayerPawnBase.m_aimPunchAngle，QAngle（3 × float）
+    int m_aimPunchCache{0};  // C_CSPlayerPawnBase.m_aimPunchCache，CUtlVector<QAngle>
     int entityHandleMask{0x7FFF};
 
     // 骨骼布局：默认按 CTransform（四元数 16 字节 + 坐标 12 字节）取值；

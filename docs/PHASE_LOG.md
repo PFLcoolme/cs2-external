@@ -763,3 +763,54 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 - `Game::offsets_` 是构造时的值拷贝，配置热重载只更新 `AppState::config`，不刷新 `Game`。偏移变更必须重启 `cs2_lite`。
 - 本轮未实机验证方框 / 自瞄 / 扳机的游戏内画面，Xvfb 内无法让游戏窗口出现在该 display；验证收敛到偏移可读性与渲染路径。
 - `m_bSpotted` 在本版本恒 0，已记入 README，后续不得再作为门控条件。
+
+---
+
+# 阶段二十一：后坐力抵消与五项交互增强
+
+## 1. 目标
+
+实现后坐力抵消（无后坐力）与五项零新偏移的交互增强：热键重绑定、掉血浮字时长/颜色、残血描边、残影轨迹。
+
+## 2. 实现
+
+- 偏移层
+  - `Offsets` 新增 `m_aimPunchAngle`、`m_aimPunchCache`，默认 0 表示未配置。
+  - `OffsetsImporter` 增加两条绑定；`config/default.json` 同步两个键。
+  - 生成器新增 `maybe_any()`：可选字段未命中时只打印 `not present in schema (recoil disabled)`，不 `SystemExit`，避免因为一个可选字段让整份偏移生成失败。
+- 读取层
+  - `Snapshot::aimPunch`（`Vec2`，x = pitch，y = yaw）。
+  - 优先直读 `QAngle` 前两个 float；缺失时走 `CUtlVector<QAngle>`：指针 `+0`，`m_Size` 在 `+16`（Source SDK `CUtlMemory`：`m_pMemory`/`m_nAllocationCount`/`m_nGrowSize` → 16 字节），`m_Size` 限定 1..64 防脏指针。
+- 补偿层
+  - `Features::recoilStep()` 每帧只补偿 `punch - lastPunch` 的**增量**：绝对值每帧重发会在压枪时过转，停火衰减期也会被持续反向追打。
+  - 单帧角度超过 `maxDegrees` 直接丢弃并清零基准；像素换算沿用 aimStep 的 `屏幕高 / 90°`。
+  - 强度支持负值，用于实机方向相反时翻转，不需要改代码。
+- 绘制层
+  - 残影轨迹：`std::map<int, std::deque<TrailPoint>>`，`trailMs` 窗口淘汰，目标消失整条丢弃。
+  - 残血描边：本帧可绘制敌人中血量最低者画橙红外框，准星目标白框优先。
+  - 掉血浮字：时长与颜色改为配置驱动，颜色取 `0xRRGGBB`。
+- 面板层
+  - 自瞄页新增 开镜键 / 开火键 下拉、后坐力抵消 / 仅开火时 勾选、强度 / 上限 数字框。
+  - 扳机页新增 触发键 下拉；ESP 页新增 残影轨迹 + 时长、残血描边、浮字时长 + 颜色。
+  - 状态行新增 4 秒驻留（`messageUntil_`），保存提示不再被 400 ms 连接状态轮询秒覆盖。
+
+## 3. 验证
+
+- `cmake --build build -j8` → 10 个编译单元全部通过，0 warning / 0 error。
+- Xvfb :91 截图 `/tmp/ui_new.png`：ESP 页新增「残影轨迹 220 ms / 残血描边」「浮字 800 ms / 橙红」，面板 440×429 无裁切。
+- Xvfb :92 截图 `/tmp/ui_aim.png`、`/tmp/ui_trigger.png`：自瞄页出现 开镜键=右键 / 开火键=左键 / 后坐力抵消 / 仅开火时 / 强度 0.60 / 上限 12°；扳机页出现 触发键=不限。
+- 落盘往返（`/tmp/cs2t` 独立副本，勾选后点「应用并保存」）：
+  - `recoil = {'enabled': True, 'strength': 0.6000000238418579, 'maxDegrees': 12, 'requireFire': True}`
+  - `esp.trail=False, trailMs=220, damageMs=800, damageColor=0xff8460`
+  - `aim.scopeKey=3, aim.fireKey=1, trigger.key=0`，`offsets.dwEntityList=79275856` 未被破坏。
+- 状态行（`/tmp/ui_msg.png`）：`已保存 · 后坐力偏移缺失，先跑 tools/cs2_linux_offsets.py`。
+
+## 4. 未验证 / 风险
+
+- 采集时 `cs2` 未运行，`m_aimPunchAngle` / `m_aimPunchCache` 未能实机确认，配置里两者仍为 0；后坐力功能处于「代码就绪、偏移待生成」状态。实机需跑一次生成器让字段落盘，再重启客户端。
+- 补偿方向按公开实现约定 `dx = -Δyaw`、`dy = +Δpitch`；若实机方向相反，把强度改为负值。
+- 尚未验证：残影轨迹与残血描边的游戏内观感、后坐力补偿手感。
+
+## 5. 后续批次
+
+面板预设、武器名（`m_iItemDefinitionIndex`）、开镜状态（`m_bIsScoped`）、速度显示（`m_vecVelocity`）、闪光遮罩（`m_flFlashDuration`）、连跳（`m_fFlags`）、休眠过滤（`m_bDormant`）——均需生成器先在活体 schema 命中字段后再实现。

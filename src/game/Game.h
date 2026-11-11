@@ -30,6 +30,8 @@ struct Snapshot {
     Mat4 view{};
     Vec3 localOrigin{};
     int localTeam{0};
+    // 后坐力角度（度）：x = pitch，y = yaw；无偏移或未开火时为零向量。
+    Vec2 aimPunch{};
     int crosshairIndex{-1};
     std::vector<PlayerInfo> players;
 };

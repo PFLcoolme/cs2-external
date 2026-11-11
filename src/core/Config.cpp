@@ -46,6 +46,8 @@ Offsets offsetsFromJson(const QJsonObject& obj) {
     o.m_boneArray = asInt(obj, "m_boneArray", o.m_boneArray);
     o.m_iIDEntIndex = asInt(obj, "m_iIDEntIndex", o.m_iIDEntIndex);
     o.m_bSpotted = asInt(obj, "m_bSpotted", o.m_bSpotted);
+    o.m_aimPunchAngle = asInt(obj, "m_aimPunchAngle", o.m_aimPunchAngle);
+    o.m_aimPunchCache = asInt(obj, "m_aimPunchCache", o.m_aimPunchCache);
     o.entityHandleMask = asInt(obj, "entityHandleMask", o.entityHandleMask);
 
     o.boneStride = asInt(obj, "boneStride", o.boneStride);
@@ -82,6 +84,8 @@ QJsonObject offsetsToJson(const Offsets& o) {
     obj["m_boneArray"] = o.m_boneArray;
     obj["m_iIDEntIndex"] = o.m_iIDEntIndex;
     obj["m_bSpotted"] = o.m_bSpotted;
+    obj["m_aimPunchAngle"] = o.m_aimPunchAngle;
+    obj["m_aimPunchCache"] = o.m_aimPunchCache;
     obj["entityHandleMask"] = o.entityHandleMask;
     obj["boneStride"] = o.boneStride;
     obj["bonePosX"] = o.bonePosX;
@@ -136,6 +140,16 @@ Config Config::load(const std::string& path) {
             static_cast<float>(o.value("maxDistance").toDouble(cfg.aim.maxDistance));
     }
 
+    if (root.value("recoil").isObject()) {
+        const QJsonObject o = root.value("recoil").toObject();
+        cfg.recoil.enabled = o.value("enabled").toBool(cfg.recoil.enabled);
+        cfg.recoil.strength =
+            static_cast<float>(o.value("strength").toDouble(cfg.recoil.strength));
+        cfg.recoil.maxDegrees =
+            static_cast<float>(o.value("maxDegrees").toDouble(cfg.recoil.maxDegrees));
+        cfg.recoil.requireFire = o.value("requireFire").toBool(cfg.recoil.requireFire);
+    }
+
     if (root.value("trigger").isObject()) {
         const QJsonObject o = root.value("trigger").toObject();
         cfg.trigger.enabled = o.value("enabled").toBool(cfg.trigger.enabled);
@@ -158,6 +172,11 @@ Config Config::load(const std::string& path) {
         cfg.esp.radar = o.value("radar").toBool(cfg.esp.radar);
         cfg.esp.radarRange =
             static_cast<float>(o.value("radarRange").toDouble(cfg.esp.radarRange));
+        cfg.esp.trail = o.value("trail").toBool(cfg.esp.trail);
+        cfg.esp.trailMs = asInt(o, "trailMs", cfg.esp.trailMs);
+        cfg.esp.highlight = o.value("highlight").toBool(cfg.esp.highlight);
+        cfg.esp.damageMs = asInt(o, "damageMs", cfg.esp.damageMs);
+        cfg.esp.damageColor = asInt(o, "damageColor", cfg.esp.damageColor);
         cfg.esp.teamCheck = o.value("teamCheck").toBool(cfg.esp.teamCheck);
         cfg.esp.visibilityCheck = o.value("visibilityCheck").toBool(cfg.esp.visibilityCheck);
         cfg.esp.maxDistance =
@@ -186,6 +205,13 @@ void Config::save(const std::string& path) const {
     aimObj["maxDistance"] = static_cast<double>(aim.maxDistance);
     root["aim"] = aimObj;
 
+    QJsonObject recoilObj;
+    recoilObj["enabled"] = recoil.enabled;
+    recoilObj["strength"] = static_cast<double>(recoil.strength);
+    recoilObj["maxDegrees"] = static_cast<double>(recoil.maxDegrees);
+    recoilObj["requireFire"] = recoil.requireFire;
+    root["recoil"] = recoilObj;
+
     QJsonObject triggerObj;
     triggerObj["enabled"] = trigger.enabled;
     triggerObj["key"] = trigger.key;
@@ -205,6 +231,11 @@ void Config::save(const std::string& path) const {
     espObj["skeleton"] = esp.skeleton;
     espObj["radar"] = esp.radar;
     espObj["radarRange"] = static_cast<double>(esp.radarRange);
+    espObj["trail"] = esp.trail;
+    espObj["trailMs"] = esp.trailMs;
+    espObj["highlight"] = esp.highlight;
+    espObj["damageMs"] = esp.damageMs;
+    espObj["damageColor"] = esp.damageColor;
     espObj["teamCheck"] = esp.teamCheck;
     espObj["visibilityCheck"] = esp.visibilityCheck;
     espObj["maxDistance"] = static_cast<double>(esp.maxDistance);
