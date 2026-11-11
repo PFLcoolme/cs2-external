@@ -2,6 +2,8 @@
   "process": "cs2",
   "module": "libclient.so",
   "offsetsFile": "config/offsets.json",
+  "togglePanelKey": 65477,
+  "panicKey": 65478,
   "offsets": {
     "sigEntityList": "",
     "sigLocalPlayerPawn": "",

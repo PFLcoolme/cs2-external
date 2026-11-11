@@ -125,14 +125,20 @@ void Features::run() {
     }
 
     while (running_.load()) {
+        // 热键从配置读，面板可录制改键；配置缺失时退回 F8 / F9 默认值。
+        // 键位 <= 0 视为禁用（keyDown 对 0 恒真，不能直接传进去）。
+        const std::shared_ptr<Config> hotkeyConfig = state_.config.load();
+        const int toggleKey = hotkeyConfig ? hotkeyConfig->togglePanelKey : kTogglePanelKey;
+        const int panicKey = hotkeyConfig ? hotkeyConfig->panicKey : kPanicKey;
+
         // 面板热键：只认按下沿，长按不会连续切换。放在所有早退分支之前，
         // 这样即使没连上游戏、偏移缺失，面板也还能收起来。
-        const bool toggleHeld = keyDown(display, kTogglePanelKey);
+        const bool toggleHeld = toggleKey > 0 && keyDown(display, toggleKey);
         if (toggleHeld && !lastTogglePanel_) state_.panelToggle.store(1);
         lastTogglePanel_ = toggleHeld;
 
-        // F9 是开关式：按一下进入静默，再按一下恢复。
-        const bool panicHeld = keyDown(display, kPanicKey);
+        // 开关式：按一下进入静默，再按一下恢复。
+        const bool panicHeld = panicKey > 0 && keyDown(display, panicKey);
         if (panicHeld && !lastPanic_) {
             state_.panicMode.store(state_.panicMode.load() != 0 ? 0 : 1);
         }

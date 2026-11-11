@@ -102,6 +102,9 @@ struct Config {
     std::string offsetsFile;
     std::string offsetsSource{"config.json 内嵌"};
     Offsets offsets;
+    // 全局快捷键（X11 keysym）：F8 显隐面板、F9 一键静默。面板可录制改键。
+    int togglePanelKey{0xFFC5};
+    int panicKey{0xFFC6};
     AimbotConfig aim;
     RecoilConfig recoil;
     TrackConfig track;
@@ -126,6 +129,11 @@ struct AppState {
     std::atomic<int> espDrawn{0};
     std::atomic<int> espTeamFiltered{0};
     std::atomic<int> espDistanceFiltered{0};
+
+    // 命中统计：从进程启动累计。掉血检测与浮字开关解耦，关掉浮字也照样计数。
+    std::atomic<int> espHits{0};
+    std::atomic<int> espDamage{0};
+    std::atomic<int> espKills{0};
 
     // 1 = 请求切换面板显隐（Features 线程检测热键，主线程消费后清零）。
     std::atomic<int> panelToggle{0};

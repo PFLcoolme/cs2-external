@@ -120,6 +120,10 @@ private:
     QSpinBox* triggerCooldown_{nullptr};
     KeyBindButton* triggerKey_{nullptr};
 
+    // 全局快捷键：显隐面板 / 一键静默，可录制改键。
+    KeyBindButton* togglePanelKey_{nullptr};
+    KeyBindButton* panicKey_{nullptr};
+
     QLabel* status_{nullptr};
     // 叠加层每帧的采集/绘制/过滤计数：区分「没敌人」和「被过滤」。
     QLabel* stats_{nullptr};

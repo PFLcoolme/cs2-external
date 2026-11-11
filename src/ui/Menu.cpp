@@ -550,11 +550,13 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
             } else if (seen == 0) {
                 stats_->setText("采集 0 · 当前视野内没有实体");
             } else {
-                stats_->setText(QString("采集 %1 · 方框 %2 · 队友 %3 · 距离 %4")
+                stats_->setText(QString("采集 %1 · 方框 %2 · 队友 %3 · 距离 %4 · 命中 %5 · 伤害 %6")
                                     .arg(seen)
                                     .arg(state_.espDrawn.load())
                                     .arg(state_.espTeamFiltered.load())
-                                    .arg(state_.espDistanceFiltered.load()));
+                                    .arg(state_.espDistanceFiltered.load())
+                                    .arg(state_.espHits.load())
+                                    .arg(state_.espDamage.load()));
             }
         }
 
@@ -1031,6 +1033,11 @@ void Menu::buildUi() {
     triggerKey_ = makeKeyBind(this, initial.trigger.key);
     triggerKey_->onChanged = [this] { armPersist(); };
 
+    togglePanelKey_ = makeKeyBind(this, initial.togglePanelKey);
+    togglePanelKey_->onChanged = [this] { armPersist(); };
+    panicKey_ = makeKeyBind(this, initial.panicKey);
+    panicKey_->onChanged = [this] { armPersist(); };
+
     silentEnabled_ = new ToggleSwitch(this);
     silentEnabled_->setChecked(initial.silent.enabled);
     silentTeam_ = new ToggleSwitch(this);
@@ -1134,6 +1141,12 @@ void Menu::buildUi() {
 
     // ---- 页四：日志 ----
     QVBoxLayout* logLayout = addPage();
+
+    // 全局快捷键放在日志页顶部：这页空间充裕，且不属于任何单个功能。
+    logLayout->addWidget(paramRow("面板显隐键", togglePanelKey_, this));
+    logLayout->addWidget(paramRow("一键静默键", panicKey_, this));
+    logLayout->addSpacing(10);
+
     logView_ = new QPlainTextEdit(this);
     logView_->setObjectName("log");
     logView_->setReadOnly(true);
@@ -1272,6 +1285,9 @@ void Menu::apply() {
     next.trigger.cooldownMs = triggerCooldown_->value();
     next.trigger.key = triggerKey_->code();
 
+    next.togglePanelKey = togglePanelKey_->code();
+    next.panicKey = panicKey_->code();
+
     // 后坐力依赖 punch 角度：两个偏移都缺失时明确告知，不然用户只会看到「没反应」。
     const bool punchReady =
         next.offsets.m_pAimPunchServices != 0 && next.offsets.m_aimPunchAngle != 0;
@@ -1397,6 +1413,8 @@ void Menu::syncFrom(const Config& config) {
     triggerDelay_->setValue(config.trigger.delayMs);
     triggerCooldown_->setValue(config.trigger.cooldownMs);
     triggerKey_->setCode(config.trigger.key);
+    togglePanelKey_->setCode(config.togglePanelKey);
+    panicKey_->setCode(config.panicKey);
     syncing_ = false;
 }
 

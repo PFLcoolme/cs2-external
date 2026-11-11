@@ -279,27 +279,37 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
     drawnCount_ = 0;
     const auto now = std::chrono::steady_clock::now();
 
-    // 掉血浮字：按实体序号比对上一帧血量。只记录「掉血」，回血或换人（序号复用）
-    // 不产生浮字；超过 damageMs 或目标消失即清理，避免吃内存。
-    if (config->esp.damageNumbers) {
-        const auto damageWindow = std::chrono::milliseconds(std::max(100, config->esp.damageMs));
+    // 掉血检测：按实体序号比对上一帧血量。统计与浮字开关解耦——
+    // 关掉「伤害浮字」也照样累计命中 / 伤害 / 击杀，只是不画飘字。
+    {
         std::map<int, int> current;
         for (const PlayerInfo& player : snapshot.players) {
             current[player.index] = player.health;
             const auto previous = lastHealth_.find(player.index);
-            if (previous != lastHealth_.end() && previous->second > player.health) {
-                damageMarks_[player.index] = DamageMark{previous->second - player.health, now};
+            if (previous == lastHealth_.end()) continue;
+            const int loss = previous->second - player.health;
+            if (loss <= 0) continue;  // 回血，或序号被复用给了新玩家
+
+            state_.espHits.fetch_add(1);
+            state_.espDamage.fetch_add(loss);
+            if (player.health <= 0 && previous->second > 0) state_.espKills.fetch_add(1);
+            if (config->esp.damageNumbers) {
+                damageMarks_[player.index] = DamageMark{loss, now};
             }
         }
         lastHealth_.swap(current);
-        for (auto it = damageMarks_.begin(); it != damageMarks_.end();) {
-            const bool expired = now - it->second.at > damageWindow;
-            const bool gone = lastHealth_.find(it->first) == lastHealth_.end();
-            it = (expired || gone) ? damageMarks_.erase(it) : std::next(it);
+
+        if (config->esp.damageNumbers) {
+            const auto damageWindow =
+                std::chrono::milliseconds(std::max(100, config->esp.damageMs));
+            for (auto it = damageMarks_.begin(); it != damageMarks_.end();) {
+                const bool expired = now - it->second.at > damageWindow;
+                const bool gone = lastHealth_.find(it->first) == lastHealth_.end();
+                it = (expired || gone) ? damageMarks_.erase(it) : std::next(it);
+            }
+        } else {
+            damageMarks_.clear();
         }
-    } else {
-        damageMarks_.clear();
-        lastHealth_.clear();
     }
 
     // 残影轨迹：每帧记录脚底屏幕坐标，按 trailMs 窗口裁剪；目标消失即整条丢弃。

@@ -24,7 +24,8 @@ struct Offsets {
     std::uintptr_t entityChunkPtrStride{0x8};
     int entityChunkShift{9};              // index >> 9 定位块
     int entityChunkMask{0x1FF};           // index & 0x1FF 定位块内槽位
-    std::uintptr_t entityChunkStride{0x78};  // 槽位步长
+    // 与 config/default.json 的 112 保持一致：实测 0x78(120) 会扫不到任何健康实体。
+    std::uintptr_t entityChunkStride{112};  // 槽位步长（0x70）
 
     // 网络字段
     int m_iHealth{0};

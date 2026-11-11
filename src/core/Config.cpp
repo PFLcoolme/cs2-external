@@ -125,6 +125,9 @@ Config Config::load(const std::string& path) {
         cfg.offsetsSource = imported.message;
     }
 
+    cfg.togglePanelKey = asInt(root, "togglePanelKey", cfg.togglePanelKey);
+    cfg.panicKey = asInt(root, "panicKey", cfg.panicKey);
+
     if (root.value("aim").isObject()) {
         const QJsonObject o = root.value("aim").toObject();
         cfg.aim.enabled = o.value("enabled").toBool(cfg.aim.enabled);
@@ -225,6 +228,8 @@ void Config::save(const std::string& path) const {
     root["module"] = QString::fromStdString(module);
     root["offsetsFile"] = QString::fromStdString(offsetsFile);
     root["offsets"] = offsetsToJson(offsets);
+    root["togglePanelKey"] = togglePanelKey;
+    root["panicKey"] = panicKey;
 
     QJsonObject aimObj;
     aimObj["enabled"] = aim.enabled;
