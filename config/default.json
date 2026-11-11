@@ -25,7 +25,7 @@
     "m_iIDEntIndex": 0,
     "m_bSpotted": 0,
     "m_aimPunchAngle": 0,
-    "m_aimPunchCache": 0,
+    "m_pAimPunchServices": 0,
     "entityHandleMask": 32767,
     "boneStride": 32,
     "bonePosX": 0,

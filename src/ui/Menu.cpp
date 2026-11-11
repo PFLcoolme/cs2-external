@@ -707,7 +707,8 @@ void Menu::apply() {
     next.trigger.key = triggerKey_->currentData().toInt();
 
     // 后坐力依赖 punch 角度：两个偏移都缺失时明确告知，不然用户只会看到「没反应」。
-    const bool punchReady = next.offsets.m_aimPunchAngle != 0 || next.offsets.m_aimPunchCache != 0;
+    const bool punchReady =
+        next.offsets.m_pAimPunchServices != 0 && next.offsets.m_aimPunchAngle != 0;
     if (next.recoil.enabled && !punchReady) {
         persist(next, "已保存 · 后坐力偏移缺失，先跑 tools/cs2_linux_offsets.py");
         return;

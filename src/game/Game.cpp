@@ -136,21 +136,14 @@ void Game::update(const Vec2& screenOrigin, int width, int height) {
     }
     snap.localTeam = memory_.read<int>(localPawn + offsets_.m_iTeamNum, 0);
 
-    // 后坐力角度：优先直读 QAngle（pitch / yaw 两个 float 足够），
-    // 部分版本只有 CUtlVector<QAngle> 缓存，则取指针后读末尾元素。
-    // CUtlVector 布局（Source SDK CUtlMemory）：m_pMemory(+0) / m_nAllocationCount(+8)
-    // / m_nGrowSize(+12) / m_Size(+16)，x64 下指针 8 字节。
-    if (offsets_.m_aimPunchAngle != 0) {
-        snap.aimPunch = memory_.read<Vec2>(localPawn + offsets_.m_aimPunchAngle);
-    } else if (offsets_.m_aimPunchCache != 0) {
-        const std::uintptr_t punchArray =
-            memory_.read<std::uintptr_t>(localPawn + offsets_.m_aimPunchCache);
-        const int punchCount =
-            memory_.read<int>(localPawn + offsets_.m_aimPunchCache + 16, 0);
-        // 合法性上限：一帧的射击历史不会超过 64 条，越界视为读错指针。
-        if (punchArray != 0 && punchCount > 0 && punchCount <= 64) {
-            const int last = punchCount > 1 ? 1 : 0;
-            snap.aimPunch = memory_.read<Vec2>(punchArray + static_cast<std::uintptr_t>(last) * 12);
+    // 后坐力角度两级跳：pawn + m_pAimPunchServices 取到服务对象指针，
+    // 再读 m_predictableBaseAngle 的前两个 float（QAngle 的 pitch / yaw）。
+    if (offsets_.m_pAimPunchServices != 0 && offsets_.m_aimPunchAngle != 0) {
+        const std::uintptr_t punchServices = memory_.read<std::uintptr_t>(
+            localPawn + static_cast<std::uintptr_t>(offsets_.m_pAimPunchServices));
+        if (punchServices != 0) {
+            snap.aimPunch = memory_.read<Vec2>(
+                punchServices + static_cast<std::uintptr_t>(offsets_.m_aimPunchAngle));
         }
     }
 

@@ -282,3 +282,29 @@ sudo ./build/cs2_lite                        # 以 root 运行
 
 面板状态行新增 4 秒驻留：`persist()` 的提示此前会被 400 ms 的连接状态轮询立刻覆盖，用户看不到「已保存」或「后坐力偏移缺失」。
 
+## 16. 阶段二十二：启动自动刷新偏移 + 后坐力链路改为实测字段
+
+需求目标：游戏每次更新后 `dwEntityList` / `dwViewMatrix` / `dwLocalPlayerPawn` 与各 netfield 偏移都会漂移，用户必须手动跑生成器才发现偏移过期。改为客户端启动时自动执行一次生成器，并修正阶段二十一里被证伪的后坐力字段。
+
+实现方式：
+
+| 项 | 变更点 | 说明 |
+| --- | --- | --- |
+| 启动自动生成 | `src/Main.cpp` 新增匿名命名空间 `refreshOffsets()` / `appendLog()` | 从 `applicationDirPath()` 向上最多 5 层找 `tools/cs2_linux_offsets.py`，`QProcess` 以 `python3` 执行，`waitForStarted(3000)` + `waitForFinished(15000)`；成功则把 `PROJECT/config/offsets.json` 复制到可执行文件目录的 `config/`（先 `remove` 再 `copy`，因为 `QFile::copy` 目标存在会失败） |
+| 调用时机 | `Config::load()` 之前 | `load()` 会立刻 `importOffsetsFile()`，晚一步只能吃到旧值 |
+| 失败降级 | 任一步失败只写日志 | 未找到脚本 / python3 起不来 / 超时（kill 后收尾）/ 非零退出 → 沿用现有 `config/offsets.json`，不影响启动 |
+| 跳过开关 | `WV_SKIP_OFFSETS=1` | 生成器异常或不想等待时跳过 |
+| 诊断 | 追加写 `/tmp/wv_lite.log`，前缀 `[offsets]` | 与面板日志页同源，可直接看到「已刷新偏移 / 生成失败 / 生成超时」 |
+| 后坐力字段 | `Offsets` 的 `m_aimPunchAngle` / `m_aimPunchCache` → `m_aimPunchAngle`(QAngle 内偏移) + `m_pAimPunchServices`(pawn 上的指针) | 本版本 schema 不存在 `m_aimPunchAngle` / `m_aimPunchCache`；实测链路是 `C_CSPlayerPawn.m_pAimPunchServices`(0x1520) → `CCSPlayer_AimPunchServices.m_predictableBaseAngle`(0x50) |
+| 生成器 | `tools/cs2_linux_offsets.py` | `wanted` 增加 `CCSPlayer_AimPunchServices`；输出 `m_pAimPunchServices` / `m_aimPunchAngle`，删除 `m_aimPunchCache`；两者仍走 `maybe_any()`，缺失不终止生成 |
+
+依赖 API：`QProcess::start/waitForStarted/waitForFinished/exitStatus/exitCode`、`QDir::cdUp`、`QFile::copy/remove`、`QCoreApplication::applicationDirPath`、`qEnvironmentVariableIsSet`。
+
+潜在风险：
+
+- 生成器耗时随进程内存增长；实测本机 cs2 在跑时 0.59 s，15 s 上限留足余量。若 15 s 仍超时只会放弃刷新，不阻塞主流程。
+- 生成器退出码非 0（cs2 未运行）时保持旧偏移，用户会看到面板状态「未找到进程」，不会静默用错值。
+- 复制目标在可执行文件目录（`build/config/offsets.json`），仓库 `config/offsets.json` 保持为生成器直写结果，二者都在 `.gitignore` 之外需注意提交内容。
+
+兼容范围：仅 Linux（`/proc/<pid>/mem`、`python3`）。`WV_SKIP_OFFSETS` 供无 python3 环境或调试用。
+

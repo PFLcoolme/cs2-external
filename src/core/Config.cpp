@@ -46,8 +46,8 @@ Offsets offsetsFromJson(const QJsonObject& obj) {
     o.m_boneArray = asInt(obj, "m_boneArray", o.m_boneArray);
     o.m_iIDEntIndex = asInt(obj, "m_iIDEntIndex", o.m_iIDEntIndex);
     o.m_bSpotted = asInt(obj, "m_bSpotted", o.m_bSpotted);
+    o.m_pAimPunchServices = asInt(obj, "m_pAimPunchServices", o.m_pAimPunchServices);
     o.m_aimPunchAngle = asInt(obj, "m_aimPunchAngle", o.m_aimPunchAngle);
-    o.m_aimPunchCache = asInt(obj, "m_aimPunchCache", o.m_aimPunchCache);
     o.entityHandleMask = asInt(obj, "entityHandleMask", o.entityHandleMask);
 
     o.boneStride = asInt(obj, "boneStride", o.boneStride);
@@ -84,8 +84,8 @@ QJsonObject offsetsToJson(const Offsets& o) {
     obj["m_boneArray"] = o.m_boneArray;
     obj["m_iIDEntIndex"] = o.m_iIDEntIndex;
     obj["m_bSpotted"] = o.m_bSpotted;
+    obj["m_pAimPunchServices"] = o.m_pAimPunchServices;
     obj["m_aimPunchAngle"] = o.m_aimPunchAngle;
-    obj["m_aimPunchCache"] = o.m_aimPunchCache;
     obj["entityHandleMask"] = o.entityHandleMask;
     obj["boneStride"] = o.boneStride;
     obj["bonePosX"] = o.bonePosX;

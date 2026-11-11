@@ -488,7 +488,8 @@ def main():
     schema, ss_mod = find_schema_system(proc, so_path)
     wanted = {"C_BaseEntity", "CGameSceneNode", "CSkeletonInstance",
               "C_CSPlayerPawn", "C_CSPlayerPawnBase", "EntitySpottedState_t",
-              "CCSPlayerController", "CBasePlayerController", "C_BasePlayerPawn"}
+              "CCSPlayerController", "CBasePlayerController", "C_BasePlayerPawn",
+              "CCSPlayer_AimPunchServices"}
     fields, class_total = read_schema_classes(proc, schema, ss_mod, wanted)
 
     def need(cls, name):
@@ -537,8 +538,13 @@ def main():
         print(f"[field] {name} not present in schema (recoil disabled)")
         return None
 
-    m_aimPunchAngle = maybe_any(["C_CSPlayerPawnBase", "C_CSPlayerPawn"], "m_aimPunchAngle")
-    m_aimPunchCache = maybe_any(["C_CSPlayerPawnBase", "C_CSPlayerPawn"], "m_aimPunchCache")
+    # 后坐力角度需要两级跳：C_CSPlayerPawn.m_pAimPunchServices 是指针，
+    # 指向 CCSPlayer_AimPunchServices；后坐基准角是其中的 m_predictableBaseAngle
+    # （QAngle，12 字节；紧随其后的 m_predictableBaseAngleVel 可反证宽度）。
+    # 本版本 schema 没有 C_CSPlayerPawn.m_aimPunchAngle / m_aimPunchCache。
+    m_pAimPunchServices = maybe_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"],
+                                    "m_pAimPunchServices")
+    m_aimPunchAngle = maybe_any(["CCSPlayer_AimPunchServices"], "m_predictableBaseAngle")
     m_bIsLocalPlayerController = need("CBasePlayerController", "m_bIsLocalPlayerController")
     m_hPlayerPawn = need("CCSPlayerController", "m_hPlayerPawn")
     m_hController = need("C_BasePlayerPawn", "m_hController")
@@ -684,7 +690,7 @@ def main():
         "m_iIDEntIndex": m_iIDEntIndex,
         "m_bSpotted": m_bSpotted,
         "m_aimPunchAngle": m_aimPunchAngle or 0,
-        "m_aimPunchCache": m_aimPunchCache or 0,
+        "m_pAimPunchServices": m_pAimPunchServices or 0,
     }
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)

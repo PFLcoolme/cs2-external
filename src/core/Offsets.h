@@ -37,8 +37,11 @@ struct Offsets {
     int m_boneArray{0};
     int m_iIDEntIndex{0};
     int m_bSpotted{0};  // 可见性：CS2 中为 1 字节 bool
-    int m_aimPunchAngle{0};  // C_CSPlayerPawnBase.m_aimPunchAngle，QAngle（3 × float）
-    int m_aimPunchCache{0};  // C_CSPlayerPawnBase.m_aimPunchCache，CUtlVector<QAngle>
+    // 后坐力角度需要两级跳：C_CSPlayerPawn.m_pAimPunchServices（实测 0x1520）
+    // 指向 CCSPlayer_AimPunchServices，其 m_predictableBaseAngle（实测 0x50）是 QAngle。
+    // 本版本 schema 里没有 m_aimPunchAngle / m_aimPunchCache 这两个旧字段。
+    int m_pAimPunchServices{0};
+    int m_aimPunchAngle{0};
     int entityHandleMask{0x7FFF};
 
     // 骨骼布局：默认按 CTransform（四元数 16 字节 + 坐标 12 字节）取值；

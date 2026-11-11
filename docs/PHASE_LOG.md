@@ -814,3 +814,44 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 ## 5. 后续批次
 
 面板预设、武器名（`m_iItemDefinitionIndex`）、开镜状态（`m_bIsScoped`）、速度显示（`m_vecVelocity`）、闪光遮罩（`m_flFlashDuration`）、连跳（`m_fFlags`）、休眠过滤（`m_bDormant`）——均需生成器先在活体 schema 命中字段后再实现。
+
+# 阶段二十二：启动自动刷新偏移 + 后坐力链路改为实测字段
+
+## 1. 开发过程
+
+1. 在 `src/Main.cpp` 加入 `refreshOffsets()`：定位仓库根（向上找 `tools/cs2_linux_offsets.py`）→ `QProcess` 跑 `python3` → 成功后把 `config/offsets.json` 复制到可执行文件目录。调用点放在 `Config::load()` 之前。
+2. 生成器改为采集实测字段：`wanted` 增加 `CCSPlayer_AimPunchServices`；`m_pAimPunchServices = maybe_any(["C_CSPlayerPawn","C_CSPlayerPawnBase"], "m_pAimPunchServices")`、`m_aimPunchAngle = maybe_any(["CCSPlayer_AimPunchServices"], "m_predictableBaseAngle")`；结果字典删除 `m_aimPunchCache`。
+3. 客户端侧一把改齐：`Offsets.h`、`Config.cpp`（load/save 键名）、`OffsetsImporter.cpp`（绑定表）、`Game.cpp`（两级解引用读 `Vec2`）、`Menu.cpp`（`punchReady` 改为两个偏移同时非零）、`config/default.json`。
+4. 重新生成 + 编译 + 双模式启动验证。
+
+## 2. 实测证据
+
+- 生成器输出：`[field] C_CSPlayerPawn.m_pAimPunchServices = 5408 (0x1520)`、`[field] CCSPlayer_AimPunchServices.m_predictableBaseAngle = 80 (0x50)`。
+- 同类的宽度反证：`CCSPlayer_AimPunchServices.m_predictableBaseAngleVel = 92 (0x5c)`，即 `m_predictableBaseAngle` 为 12 字节 QAngle，与 `Vec2` 读取前两个 float 一致。
+- 枚举规模：`classes_in_libclient=364`，说明 `wanted` 之外没有遗漏同名候选。
+- 活体解引用（对局内，localPawn health=100）：`punchServices = 0x2abc2417c00 readable=True`，`baseAngle @0x50 = [0.0, 0.0, 0.0]`（未开火时为 0，结构对齐正确）。曾捕获一次 `0x0900050051000051` 的非指针值，同一 pawn 复测即恢复为有效堆指针，判断为出生瞬间字段未初始化，不影响稳态读取。
+- 交叉对照：`C_BasePlayerPawn.m_pCameraServices`(0x12b0) → `CPlayer_CameraServices.m_vecCsViewPunchAngle`(0x48) 同样可读且为 `[0,0,0]`，作为备用链路记录，本次未接入。
+- 生成器耗时：cs2 运行中 0.587 s（两次测量一致），15 s 超时上限留有 25 倍余量。
+- 启动验证（Xvfb `:96`，1280x800x24）：
+  - 默认启动 → `/tmp/wv_lite.log` 出现 `[offsets] 已刷新偏移: /mnt/data/home/项目/cs2/build/config/offsets.json`，`build/config/offsets.json` 与仓库同值（`dwEntityList=79275856`、`m_pAimPunchServices=5408`、`m_aimPunchAngle=80`）。
+  - `WV_SKIP_OFFSETS=1` → `[offsets] 跳过自动生成（WV_SKIP_OFFSETS 已设置）`。
+  - 两次进程均正常存活到 `timeout` 终止（exit 124）。中途出现的 exit 134 是测试用 Xvfb 已被前一条命令回收、Qt 连不上 X server 导致，非程序缺陷；同一 shell 内保活 Xvfb 后不再复现。
+- 构建：`cmake --build build -j8` 10/10 成功，0 warning。
+
+## 3. 变更记录
+
+- `src/Main.cpp`：`refreshOffsets()` / `appendLog()`，`refreshOffsets()` 在 `Config::load` 前调用。
+- `src/core/Offsets.h`：`m_aimPunchCache` → `m_pAimPunchServices`。
+- `src/core/Config.cpp`：`m_aimPunchCache` 键名替换为 `m_pAimPunchServices`（load + save）。
+- `src/core/OffsetsImporter.cpp`：绑定表同步。
+- `src/game/Game.cpp`：`pawn + m_pAimPunchServices` 取指针，再 `+ m_aimPunchAngle` 读 `Vec2`。
+- `src/ui/Menu.cpp`：`punchReady` 改为 `m_pAimPunchServices != 0 && m_aimPunchAngle != 0`。
+- `tools/cs2_linux_offsets.py`：punch 采集换成两级跳字段，`wanted` 增加 `CCSPlayer_AimPunchServices`。
+- `config/default.json`：键名同步。
+- `config/offsets.json`：重新生成，`m_aimPunchAngle=80`、`m_pAimPunchServices=5408`。
+
+## 4. 未验证 / 风险
+
+- 未实机开火：`m_predictableBaseAngle` 在未射击时恒为 0，无法区分「字段正确」与「字段恒 0」。需在实战中打一梭子确认数值随散布变化；若仍恒 0，改用已记录备用的 `m_pCameraServices → m_vecCsViewPunchAngle` 链路。
+- 补偿方向 `dx = -Δyaw`、`dy = +Δpitch` 仍按公开实现约定，方向若相反把强度改负值。
+- 启动自动刷新依赖 `python3` 与仓库目录结构；打包分发（只带走可执行文件）时向上找不到 `tools/`，会走「沿用现有偏移」分支。

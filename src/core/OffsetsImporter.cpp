@@ -51,10 +51,10 @@ const std::vector<FieldBinding>& bindings() {
          [](Offsets& o, std::uint64_t v) { o.m_iIDEntIndex = static_cast<int>(v); }},
         {"m_bSpotted", nullptr,
          [](Offsets& o, std::uint64_t v) { o.m_bSpotted = static_cast<int>(v); }},
+        {"m_pAimPunchServices", nullptr,
+         [](Offsets& o, std::uint64_t v) { o.m_pAimPunchServices = static_cast<int>(v); }},
         {"m_aimPunchAngle", nullptr,
          [](Offsets& o, std::uint64_t v) { o.m_aimPunchAngle = static_cast<int>(v); }},
-        {"m_aimPunchCache", nullptr,
-         [](Offsets& o, std::uint64_t v) { o.m_aimPunchCache = static_cast<int>(v); }},
     };
     return table;
 }
