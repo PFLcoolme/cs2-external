@@ -17,6 +17,7 @@ class QLabel;
 class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
+class QStackedWidget;
 class QVBoxLayout;
 
 namespace wv {
@@ -106,6 +107,10 @@ private:
 
     QLabel* status_{nullptr};
     QPlainTextEdit* logView_{nullptr};
+
+    // 左侧类别导航 + 右侧分页：类别仍然是四页，页内一个功能一行。
+    QPushButton* tabs_[4]{};
+    QStackedWidget* pages_{nullptr};
 
     // 参数弹层：按标题缓存已建好的弹层与该弹层的构造器。
     QHash<QString, QWidget*> popups_;

@@ -23,6 +23,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -56,12 +57,6 @@ QLabel#status {
 }
 QLabel#hint { color: #9AA0A6; font-size: 10px; }
 QLabel#warn { color: #F2F3F5; font-size: 10px; font-weight: 700; }
-QLabel#section {
-    color: #6E747B;
-    font-size: 10px;
-    letter-spacing: 3px;
-    padding: 6px 2px 2px 2px;
-}
 QWidget#row { border-radius: 6px; }
 QWidget#row:hover { background: rgba(255, 255, 255, 16); }
 QWidget#popup {
@@ -139,6 +134,18 @@ QPushButton#restore {
 QPushButton#restore:hover { background: rgba(255, 255, 255, 30); color: #F2F3F5; border-color: rgba(255, 255, 255, 110); }
 QPushButton#restore:pressed { background: rgba(255, 255, 255, 70); color: #0F1113; }
 QPushButton#apply:pressed { background: rgba(255, 255, 255, 180); color: #0F1113; }
+QPushButton#tab {
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    color: #B4B9BF;
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-align: left;
+    padding: 6px 8px;
+}
+QPushButton#tab:hover { background: rgba(255, 255, 255, 18); color: #F2F3F5; }
+QPushButton#tab:checked { background: rgba(255, 255, 255, 235); color: #0F1113; }
 QPushButton#close {
     background: transparent;
     border: 0;
@@ -411,18 +418,60 @@ void Menu::buildUi() {
     root->addWidget(status_);
     root->addWidget(rule(this));
 
-    // ---- 主体：一个功能一行，参数收进右键弹层 ----
-    auto* scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setMaximumHeight(384);
-    auto* list = new QWidget(scroll);
-    auto* listLayout = new QVBoxLayout(list);
-    listLayout->setContentsMargins(0, 0, 6, 0);
-    listLayout->setSpacing(2);
-    scroll->setWidget(list);
-    root->addWidget(scroll, 1);
+    // ---- 主体：左侧类别导航 + 右侧单行功能表 ----
+    auto* body = new QHBoxLayout();
+    body->setSpacing(14);
+
+    // 类别导航：四个互斥按钮，点击只切右侧分页。类别保留，页内改成一行一个功能。
+    auto* navCol = new QVBoxLayout();
+    navCol->setSpacing(4);
+    navCol->setContentsMargins(0, 0, 0, 0);
+    const QStringList tabNames{"透 视", "自 瞄", "扳 机", "日 志"};
+    for (int i = 0; i < tabNames.size(); ++i) {
+        auto* tab = new QPushButton(tabNames.at(i), this);
+        tab->setObjectName("tab");
+        tab->setCheckable(true);
+        tab->setAutoExclusive(true);
+        tab->setCursor(Qt::PointingHandCursor);
+        tab->setFocusPolicy(Qt::NoFocus);
+        tab->setFixedSize(78, 30);
+        navCol->addWidget(tab);
+        tabs_[i] = tab;
+        connect(tab, &QPushButton::clicked, this, [this, i] { pages_->setCurrentIndex(i); });
+    }
+    navCol->addStretch(1);
+    if (tabs_[0]) tabs_[0]->setChecked(true);
+
+    pages_ = new QStackedWidget(this);
+    pages_->setObjectName("pages");
+
+    body->addLayout(navCol);
+    body->addWidget(pages_, 1);
+    root->addLayout(body, 1);
+
+    // 每页一个竖排行表：行高固定，内容超出时页内滚动。
+    auto addPage = [this]() -> QVBoxLayout* {
+        auto* page = new QWidget(this);
+        auto* outer = new QVBoxLayout(page);
+        outer->setContentsMargins(0, 0, 0, 0);
+        outer->setSpacing(0);
+
+        auto* scroll = new QScrollArea(page);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        // 行表是本面板的主体：给一个下限高度，避免 QStackedWidget 按空页压缩整窗。
+        scroll->setMinimumHeight(330);
+        auto* list = new QWidget(scroll);
+        auto* listLayout = new QVBoxLayout(list);
+        listLayout->setContentsMargins(0, 0, 6, 0);
+        listLayout->setSpacing(2);
+        scroll->setWidget(list);
+
+        outer->addWidget(scroll);
+        pages_->addWidget(page);
+        return listLayout;
+    };
 
     // ---- 控件构造（参数控件不在页面里，只在右键弹层里出现一次）----
     espEnabled_ = new QCheckBox(this);
@@ -569,51 +618,44 @@ void Menu::buildUi() {
     silentHold_->setFixedWidth(82);
     silentKey_ = mouseKeyCombo(this, initial.silent.key);
 
-    // ---- 行表：一个功能一行 ----
-    auto addSection = [this, listLayout](const QString& text) {
-        auto* label = new QLabel(text, this);
-        label->setObjectName("section");
-        listLayout->addSpacing(2);
-        listLayout->addWidget(label);
-    };
-
-    addSection("透 视");
-
-    listLayout->addWidget(makeRow(espEnabled_, "玩家透视", ""));
-    listLayout->addWidget(makeRow(espBox_, "方框", ""));
-    listLayout->addWidget(makeRow(espHealth_, "血量条", ""));
-    listLayout->addWidget(makeRow(espHealthText_, "血量数值", ""));
-    listLayout->addWidget(makeRow(espArmor_, "护甲数值", ""));
-    listLayout->addWidget(makeRow(espDistance_, "距离", ""));
-    listLayout->addWidget(makeRow(espSkeleton_, "骨骼连线", ""));
-    listLayout->addWidget(makeRow(espVisibility_, "遮挡虚线", ""));
-    listLayout->addWidget(makeRow(espTeam_, "过滤队友", ""));
-
+    // ---- 页一：透视 ----
+    QVBoxLayout* espLayout = addPage();
+    espLayout->addWidget(makeRow(espEnabled_, "玩家透视", ""));
+    espLayout->addWidget(makeRow(espBox_, "方框", ""));
+    espLayout->addWidget(makeRow(espHealth_, "血量条", ""));
+    espLayout->addWidget(makeRow(espHealthText_, "血量数值", ""));
+    espLayout->addWidget(makeRow(espArmor_, "护甲数值", ""));
+    espLayout->addWidget(makeRow(espDistance_, "距离", ""));
+    espLayout->addWidget(makeRow(espSkeleton_, "骨骼连线", ""));
+    espLayout->addWidget(makeRow(espVisibility_, "遮挡虚线", ""));
+    espLayout->addWidget(makeRow(espTeam_, "过滤队友", ""));
     {
         QWidget* row = makeRow(espDamage_, "伤害浮字", "右键参数");
         attachParams(row, espDamage_, "伤害浮字", [this, row](QVBoxLayout* layout) {
             layout->addWidget(paramRow("显示时长", espDamageMs_, row));
             layout->addWidget(paramRow("颜色", espDamageColor_, row));
         });
-        listLayout->addWidget(row);
+        espLayout->addWidget(row);
     }
     {
         QWidget* row = makeRow(espTrail_, "残影轨迹", "右键参数");
         attachParams(row, espTrail_, "残影轨迹", [this, row](QVBoxLayout* layout) {
             layout->addWidget(paramRow("拖尾时长", espTrailMs_, row));
         });
-        listLayout->addWidget(row);
+        espLayout->addWidget(row);
     }
-    listLayout->addWidget(makeRow(espHighlight_, "残血描边", ""));
+    espLayout->addWidget(makeRow(espHighlight_, "残血描边", ""));
     {
         QWidget* row = makeRow(espRadar_, "2D 雷达", "右键参数");
         attachParams(row, espRadar_, "2D 雷达", [this, row](QVBoxLayout* layout) {
             layout->addWidget(paramRow("半径", espRadarRange_, row));
         });
-        listLayout->addWidget(row);
+        espLayout->addWidget(row);
     }
+    espLayout->addStretch(1);
 
-    addSection("自 瞄");
+    // ---- 页二：自瞄 ----
+    QVBoxLayout* aimLayout = addPage();
     {
         QWidget* row = makeRow(aimEnabled_, "自瞄", "右键参数");
         attachParams(row, aimEnabled_, "自瞄参数", [this, row](QVBoxLayout* layout) {
@@ -625,7 +667,7 @@ void Menu::buildUi() {
             layout->addWidget(paramRow("开火键", aimFireKey_, row));
             layout->addWidget(paramRow("过滤队友", aimTeam_, row));
         });
-        listLayout->addWidget(row);
+        aimLayout->addWidget(row);
     }
     {
         QWidget* row = makeRow(recoilEnabled_, "后坐力抵消", "右键参数");
@@ -634,7 +676,7 @@ void Menu::buildUi() {
             layout->addWidget(paramRow("单帧上限", recoilMax_, row));
             layout->addWidget(paramRow("仅开火时", recoilRequireFire_, row));
         });
-        listLayout->addWidget(row);
+        aimLayout->addWidget(row);
     }
     {
         QWidget* row = makeRow(trackEnabled_, "子弹追踪", "右键参数");
@@ -644,10 +686,12 @@ void Menu::buildUi() {
             layout->addWidget(paramRow("触发键", trackKey_, row));
             layout->addWidget(paramRow("过滤队友", trackTeam_, row));
         });
-        listLayout->addWidget(row);
+        aimLayout->addWidget(row);
     }
+    aimLayout->addStretch(1);
 
-    addSection("扳 机");
+    // ---- 页三：扳机 ----
+    QVBoxLayout* triggerLayout = addPage();
     {
         QWidget* row = makeRow(triggerEnabled_, "自动扳机", "右键参数");
         attachParams(row, triggerEnabled_, "自动扳机", [this, row](QVBoxLayout* layout) {
@@ -655,7 +699,7 @@ void Menu::buildUi() {
             layout->addWidget(paramRow("冷却", triggerCooldown_, row));
             layout->addWidget(paramRow("触发键", triggerKey_, row));
         });
-        listLayout->addWidget(row);
+        triggerLayout->addWidget(row);
     }
     {
         QWidget* row = makeRow(silentEnabled_, "静默锁头", "右键参数");
@@ -665,18 +709,20 @@ void Menu::buildUi() {
             layout->addWidget(paramRow("触发键", silentKey_, row));
             layout->addWidget(paramRow("过滤队友", silentTeam_, row));
         });
-        listLayout->addWidget(row);
+        triggerLayout->addWidget(row);
     }
+    triggerLayout->addStretch(1);
 
-    addSection("日 志");
-    logView_ = new QPlainTextEdit(list);
+    // ---- 页四：日志 ----
+    QVBoxLayout* logLayout = addPage();
+    logView_ = new QPlainTextEdit(this);
     logView_->setObjectName("log");
     logView_->setReadOnly(true);
     logView_->setFrameShape(QFrame::NoFrame);
-    logView_->setFixedHeight(96);
+    logView_->setMinimumHeight(200);
     logView_->setPlainText(tailOfLog("/tmp/wv_lite.log"));
-    listLayout->addWidget(logView_);
-    listLayout->addStretch(1);
+    logLayout->addWidget(logView_);
+    logLayout->addStretch(1);
 
     root->addWidget(rule(this));
 

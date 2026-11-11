@@ -367,13 +367,13 @@ sudo ./build/cs2_lite                        # 以 root 运行
 
 ## 19. 阶段二十五：功能单列 + 右键参数弹层
 
-需求目标：面板不再用左侧标签分页，一个功能直接占一行；该功能的参数收进右键弹层，右键点行即可调。
+需求目标：类别分类保留（左栏四个类别页），页内改成「一个功能一行」；该功能的参数收进右键弹层，右键点行即可调。
 
 实现方式：
 
 | 项 | 变更点 | 说明 |
 | --- | --- | --- |
-| 布局 | `Menu::buildUi()` | 去掉左侧导航与 `QStackedWidget`，改 `QScrollArea`（`maxHeight=384`，横滚关闭）内 `QVBoxLayout` 单列行表，分「透 视 / 自 瞄 / 扳 机 / 日 志」四段 |
+| 布局 | `Menu::buildUi()` | 保留左侧 `tabs_[4]`（透 视 / 自 瞄 / 扳 机 / 日 志）+ `QStackedWidget` 四页；每页一个 `QScrollArea`（横滚关闭，最小高 330）内 `QVBoxLayout` 单列行表 |
 | 行 | `Menu::makeRow()` | `QWidget#row` + `QCheckBox`（功能开关）+ 右侧 `QLabel#hint`；有参数的行走「右键参数」提示 |
 | 弹层 | `Menu::attachParams()` / `ensurePopup()` | `Qt::Popup` 子窗口，行与勾选框都挂 `CustomContextMenu`；首次右键惰性构建并缓存到 `QHash<QString, QWidget*> popups_`，之后再右键只 `move/show/raise` |
 | 落盘 | `Menu::eventFilter()` | 监听弹层 `QEvent::Hide` → `apply()`；弹层一关即写 `config.json`，不必回底部点保存 |
@@ -385,6 +385,6 @@ sudo ./build/cs2_lite                        # 以 root 运行
 
 - `Qt::Popup` 在部分合成器下会单独占一个覆盖窗口；无合成器的 X11 为普通子窗口，焦点丢失由 Qt 自己处理。
 - 弹层关闭才落盘：只改勾选框、既不开弹层也不点「应用并保存」时不会写入，底部按钮仍保留为兜底路径。
-- 行数增加（当前 17 行）后列表超出 384 px 需要滚动，鼠标滚轮在列表内有效。
+- 透视页 13 行约 325 px，刚好在 330 px 内；再增加功能行时该页会出现竖向滚动。
 
 兼容范围：Qt6 Widgets（X11 / Wayland 均可，弹层为纯 Qt 控件，不依赖 XTest）。
