@@ -17,6 +17,8 @@ namespace {
 constexpr int kLoopIntervalMs = 1;
 // F8：显隐控制面板。面板被游戏盖住时不必 Alt+Tab 出去找窗口。
 constexpr int kTogglePanelKey = 0xFFC5;  // XK_F8
+// F9：Panic。一键停掉叠加层与全部输入合成，按一下回到完全静默。
+constexpr int kPanicKey = 0xFFC6;  // XK_F9
 
 // 诊断输出：始终追加写入 /tmp/wv_lite.log（带节流），WV_DEBUG=1 时同时写 stderr。
 // 这样无论以 sudo 还是普通用户启动，都能事后读取按键/门控/目标证据。
@@ -128,6 +130,20 @@ void Features::run() {
         const bool toggleHeld = keyDown(display, kTogglePanelKey);
         if (toggleHeld && !lastTogglePanel_) state_.panelToggle.store(1);
         lastTogglePanel_ = toggleHeld;
+
+        // F9 是开关式：按一下进入静默，再按一下恢复。
+        const bool panicHeld = keyDown(display, kPanicKey);
+        if (panicHeld && !lastPanic_) {
+            state_.panicMode.store(state_.panicMode.load() != 0 ? 0 : 1);
+        }
+        lastPanic_ = panicHeld;
+
+        // 静默期间不做任何输入合成，连诊断输出都停掉。
+        if (state_.panicMode.load() != 0) {
+            state_.aimGate.store(0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(kLoopIntervalMs));
+            continue;
+        }
 
         // 物理键位映射记录：掩码变化即写一行，放在所有门控之前，
         // 这样即使游戏未被判定为前台也能拿到真实的 ButtonN。

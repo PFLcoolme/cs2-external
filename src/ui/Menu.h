@@ -20,6 +20,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
 class QStackedWidget;
+class QTimer;
 class QVBoxLayout;
 
 namespace wv {
@@ -48,6 +49,8 @@ private:
     // build 非空时，参数控件就地展开在该行下方（下拉式），不再另开浮窗。
     QWidget* makeRow(QCheckBox* toggle, const QString& name, const QString& hint,
                      const std::function<void(QVBoxLayout*)>& build = {});
+    // 参数改动后启动 400 ms 防抖定时器；回填控件期间不触发。
+    void armPersist();
     void apply();
     // 恢复上一次保存的配置（config.json.bak），可与当前配置来回切换。
     void restoreLast();
@@ -118,6 +121,11 @@ private:
     QLabel* status_{nullptr};
     // 叠加层每帧的采集/绘制/过滤计数：区分「没敌人」和「被过滤」。
     QLabel* stats_{nullptr};
+
+    // 参数改动后 400 ms 自动落盘，避免「改完忘了保存」。
+    QTimer* persistTimer_{nullptr};
+    // 热重载回填控件时置位，防止回填动作本身触发写盘。
+    bool syncing_{false};
     QPlainTextEdit* logView_{nullptr};
 
     // 左侧类别导航 + 右侧分页：类别仍然是四页，页内一个功能一行。

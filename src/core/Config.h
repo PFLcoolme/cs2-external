@@ -126,6 +126,9 @@ struct AppState {
 
     // 1 = 请求切换面板显隐（Features 线程检测热键，主线程消费后清零）。
     std::atomic<int> panelToggle{0};
+
+    // 1 = Panic 模式：叠加层不绘制、所有输入合成停止。按 F9 切换。
+    std::atomic<int> panicMode{0};
 };
 
 }  // namespace wv

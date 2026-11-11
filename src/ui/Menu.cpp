@@ -276,6 +276,10 @@ public:
     QSize minimumSizeHint() const override { return sizeHint(); }
 
 protected:
+    // 自绘控件：整块区域都应响应点击。默认实现按 style 里 13px 的 indicator
+    // 加文字计算命中范围，自绘成 34px 轨道后就点不到了。
+    bool hitButton(const QPoint& pos) const override { return rect().contains(pos); }
+
     void paintEvent(QPaintEvent* /*event*/) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
@@ -483,6 +487,13 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
     // 左侧分类列表固定 92px + 间距 12px，右侧内容区保持原来的 ~400px。
     setFixedWidth(540);
     setStyleSheet(kStyle);
+
+    // 参数防抖：改动后静默 400 ms 才落盘，拖动 spinbox 时不会疯狂写文件。
+    persistTimer_ = new QTimer(this);
+    persistTimer_->setSingleShot(true);
+    persistTimer_->setInterval(400);
+    connect(persistTimer_, &QTimer::timeout, this, &Menu::apply);
+
     buildUi();
 
     // 快照只在没有合成器时才会用到；此时窗口还没显示，抓屏拍不到面板自身。
@@ -921,9 +932,9 @@ void Menu::buildUi() {
     aimSensitivity_->setValue(initial.aim.sensitivityFactor);
     aimSensitivity_->setFixedWidth(84);
     aimScopeKey_ = makeKeyBind(this, initial.aim.scopeKey);
-    aimScopeKey_->onChanged = [this] { apply(); };
+    aimScopeKey_->onChanged = [this] { armPersist(); };
     aimFireKey_ = makeKeyBind(this, initial.aim.fireKey);
-    aimFireKey_->onChanged = [this] { apply(); };
+    aimFireKey_->onChanged = [this] { armPersist(); };
 
     recoilEnabled_ = new ToggleSwitch(this);
     recoilEnabled_->setChecked(initial.recoil.enabled);
@@ -956,7 +967,7 @@ void Menu::buildUi() {
     trackSmooth_->setValue(initial.track.smooth);
     trackSmooth_->setFixedWidth(66);
     trackKey_ = makeKeyBind(this, initial.track.key);
-    trackKey_->onChanged = [this] { apply(); };
+    trackKey_->onChanged = [this] { armPersist(); };
 
     triggerEnabled_ = new ToggleSwitch(this);
     triggerEnabled_->setChecked(initial.trigger.enabled);
@@ -971,7 +982,7 @@ void Menu::buildUi() {
     triggerCooldown_->setValue(initial.trigger.cooldownMs);
     triggerCooldown_->setFixedWidth(82);
     triggerKey_ = makeKeyBind(this, initial.trigger.key);
-    triggerKey_->onChanged = [this] { apply(); };
+    triggerKey_->onChanged = [this] { armPersist(); };
 
     silentEnabled_ = new ToggleSwitch(this);
     silentEnabled_->setChecked(initial.silent.enabled);
@@ -989,7 +1000,7 @@ void Menu::buildUi() {
     silentHold_->setValue(initial.silent.holdMs);
     silentHold_->setFixedWidth(82);
     silentKey_ = makeKeyBind(this, initial.silent.key);
-    silentKey_->onChanged = [this] { apply(); };
+    silentKey_->onChanged = [this] { armPersist(); };
 
     // 参数控件直接挂在各行下方的下拉区里，不再需要临时隐藏容器。
 
@@ -1122,6 +1133,27 @@ void Menu::buildUi() {
     actions->addWidget(restoreButton, 1);
     actions->addWidget(applyButton, 2);
     contentLayout->addLayout(actions);
+
+    // 所有参数控件改完 400 ms 自动落盘：勾选框 / 数值框 / 下拉框统一挂防抖，
+    // 避免再出现「改完没生效」。键位按钮走自己的 onChanged。
+    for (QCheckBox* box : findChildren<QCheckBox*>()) {
+        connect(box, &QCheckBox::toggled, this, &Menu::armPersist);
+    }
+    for (QSpinBox* spin : findChildren<QSpinBox*>()) {
+        connect(spin, &QSpinBox::valueChanged, this, &Menu::armPersist);
+    }
+    for (QDoubleSpinBox* spin : findChildren<QDoubleSpinBox*>()) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, &Menu::armPersist);
+    }
+    for (QComboBox* combo : findChildren<QComboBox*>()) {
+        connect(combo, &QComboBox::currentIndexChanged, this, &Menu::armPersist);
+    }
+}
+
+void Menu::armPersist() {
+    // 回填控件期间不落盘，否则热重载会把自己刚读到的值再写回去。
+    if (syncing_) return;
+    if (persistTimer_) persistTimer_->start();
 }
 
 void Menu::apply() {
@@ -1243,6 +1275,8 @@ void Menu::restoreLast() {
 }
 
 void Menu::syncFrom(const Config& config) {
+    // 回填期间屏蔽防抖，避免热重载把刚读到的值再写回去形成循环。
+    syncing_ = true;
     espEnabled_->setChecked(config.esp.enabled);
     espBox_->setChecked(config.esp.box);
     espHealth_->setChecked(config.esp.health);
@@ -1298,6 +1332,7 @@ void Menu::syncFrom(const Config& config) {
     triggerDelay_->setValue(config.trigger.delayMs);
     triggerCooldown_->setValue(config.trigger.cooldownMs);
     triggerKey_->setCode(config.trigger.key);
+    syncing_ = false;
 }
 
 }  // namespace wv

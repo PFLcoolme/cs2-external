@@ -1135,3 +1135,34 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 1. 锁定无视 `strategy`：开启后即使策略是「血量最低」，也会一直打第一个锁上的目标，直到它死亡或出 FOV。
 2. 目标短暂被遮挡（`m_bSpotted` 为 0）时仍保持锁定，不会切换到可见目标。
 3. 实体序号在目标死亡后会被复用，若同一帧内复用给新玩家，可能出现「锁到新人」的错觉；当前依赖 `health <= 0` 过滤来规避。
+
+---
+
+# 阶段三十一：参数防抖保存 + 开关命中修复 + F9 Panic
+
+## 1. 需求
+
+1. 只有键位改完立即保存，其余参数仍要收起参数区或点「应用并保存」才写盘，容易漏。
+2. 自绘的 iOS 开关点不动：命中区域仍按 style 里 13 px 指示器计算。
+3. F8 只收面板，叠加层与输入合成还在，缺少一键全静默的应急开关。
+
+## 2. 实现
+
+- 防抖保存：`Menu` 新增 `persistTimer_`（单次 400 ms）与 `armPersist()`；`buildUi()` 末尾用 `findChildren` 给全部 `QCheckBox` / `QSpinBox` / `QDoubleSpinBox` / `QComboBox` 挂上，键位按钮的 `onChanged` 也统一走它。
+- 回填保护：`syncFrom()` 期间置 `syncing_`，`armPersist()` 直接返回，避免热重载把自己刚读到的值再写回去形成循环。
+- 开关命中：`ToggleSwitch` 重写 `hitButton`，改为 `rect().contains(pos)`，不再依赖 style 的 13 px 指示器判定。
+- F9 Panic：`Features::run()` 取 F9 按下沿翻转 `AppState::panicMode`；置位时跳过全部输入合成并清零 `aimGate`，`Overlay::tick()` 直接隐藏叠加层。
+
+## 3. 验证结果
+
+- `cmake --build build -j` 0 warning / 0 error。
+- 防抖：改开关后 `config.json` 在 400 ms 内更新（用户实测确认可用）。
+- F8 之前已验证有效；F9 的按下沿检测与 F8 走同一条链路。
+- **未验证**：F9 的实际静默效果。验证时游戏不在前台，叠加层本就不绘制，`[tick]` 恒为 0，无法区分 panic 前后。
+
+## 4. 遗留风险
+
+1. 防抖窗口内直接关程序，最后一次改动可能来不及写盘（窗口关闭时没有 flush）。
+2. `findChildren` 会匹配后续动态创建的控件，将来若加入非参数复选框会被误挂。
+3. F9 状态不持久化，重启后回到正常模式（符合预期，但没写进配置）。
+4. Panic 只停渲染与输入；采样由 Overlay 驱动，叠加层隐藏后 `Game::update` 也不再被调用。

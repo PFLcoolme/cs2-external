@@ -48,6 +48,7 @@ private:
     long debugAimTick_{0};  // 诊断日志节流计数（自瞄）
     unsigned int lastMask_{0};  // 上一次指针按键掩码，用于记录物理键位变化
     bool lastTogglePanel_{false};  // F8 的上一帧状态，用来取按下沿
+    bool lastPanic_{false};        // F9 的上一帧状态
 };
 
 }  // namespace wv

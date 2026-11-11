@@ -116,6 +116,14 @@ Overlay::~Overlay() {
 }
 
 void Overlay::tick() {
+    // Panic：立刻收掉叠加层，不等连接状态判断。
+    if (state_.panicMode.load() != 0) {
+        state_.gameWindow.store(0);
+        windowWidth_ = 0;
+        if (isVisible()) hide();
+        return;
+    }
+
     if (!game_.ensureAttached()) {
         state_.gameWindow.store(0);
         windowWidth_ = 0;
