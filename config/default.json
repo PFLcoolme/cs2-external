@@ -53,6 +53,23 @@
     "maxDegrees": 12.0,
     "requireFire": true
   },
+  "track": {
+    "enabled": false,
+    "key": 1,
+    "fovPixels": 0.0,
+    "smooth": 1,
+    "teamCheck": true,
+    "maxDistance": 0.0
+  },
+  "silent": {
+    "enabled": false,
+    "key": 2,
+    "holdMs": 30,
+    "cooldownMs": 120,
+    "fovPixels": 0.0,
+    "teamCheck": true,
+    "maxDistance": 0.0
+  },
   "trigger": {
     "enabled": false,
     "key": 0,

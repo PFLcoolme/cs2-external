@@ -1,8 +1,10 @@
 #pragma once
 #include <QDateTime>
+#include <QHash>
 #include <QPoint>
 #include <QWidget>
 
+#include <functional>
 #include <string>
 
 #include "core/Config.h"
@@ -15,7 +17,7 @@ class QLabel;
 class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
-class QStackedWidget;
+class QVBoxLayout;
 
 namespace wv {
 
@@ -30,9 +32,17 @@ protected:
     void showEvent(QShowEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    // 参数弹层关闭时落盘：右键调完参数松手即生效，不需要再点保存。
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void buildUi();
+    // 单行 = 一个功能：开关 + 名称 + 右侧「右键」提示。
+    QWidget* makeRow(QCheckBox* toggle, const QString& name, const QString& hint);
+    // 给某一行挂上参数弹层；build 只在第一次右键时调用。
+    void attachParams(QWidget* row, QCheckBox* toggle, const QString& title,
+                      const std::function<void(QVBoxLayout*)>& build);
+    QWidget* ensurePopup(const QString& title);
     void apply();
     // 恢复上一次保存的配置（config.json.bak），可与当前配置来回切换。
     void restoreLast();
@@ -77,15 +87,29 @@ private:
     QSpinBox* recoilMax_{nullptr};
     QCheckBox* recoilRequireFire_{nullptr};
 
+    QCheckBox* trackEnabled_{nullptr};
+    QCheckBox* trackTeam_{nullptr};
+    QSpinBox* trackFov_{nullptr};
+    QSpinBox* trackSmooth_{nullptr};
+    QComboBox* trackKey_{nullptr};
+
+    QCheckBox* silentEnabled_{nullptr};
+    QCheckBox* silentTeam_{nullptr};
+    QSpinBox* silentFov_{nullptr};
+    QSpinBox* silentHold_{nullptr};
+    QComboBox* silentKey_{nullptr};
+
     QCheckBox* triggerEnabled_{nullptr};
     QSpinBox* triggerDelay_{nullptr};
     QSpinBox* triggerCooldown_{nullptr};
     QComboBox* triggerKey_{nullptr};
 
     QLabel* status_{nullptr};
-    QPushButton* tabs_[4]{nullptr, nullptr, nullptr, nullptr};
-    QStackedWidget* pages_{nullptr};
     QPlainTextEdit* logView_{nullptr};
+
+    // 参数弹层：按标题缓存已建好的弹层与该弹层的构造器。
+    QHash<QString, QWidget*> popups_;
+    QHash<QString, std::function<void(QVBoxLayout*)>> popupBuilders_;
 
     QPoint dragOffset_;
     QDateTime configStamp_;  // 配置文件最后修改时间，用于热重载比对

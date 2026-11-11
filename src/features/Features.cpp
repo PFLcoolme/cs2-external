@@ -141,10 +141,25 @@ void Features::run() {
                   scopeHeld ? 1 : 0, fireHeld ? 1 : 0,
                   static_cast<double>(config->aim.fovPixels));
         }
-        if (config->aim.enabled && scopeHeld && fireHeld) {
+        // 子弹追踪：只要按住触发键就把准星直接贴到最近敌人头部，与自瞄互斥。
+        // 自瞄有开镜前置与灵敏度衰减，追踪没有——准星去哪都先拉回头上。
+        // 必须先于自瞄执行并抢占：两个都写相对位移会在一帧内互相拉扯。
+        const bool trackHeld =
+            config->track.key <= 0 || buttonDown(display, config->track.key);
+        const bool tracking =
+            config->track.enabled && trackHeld &&
+            trackStep(display, *config, snapshot, attributes.width, attributes.height);
+        if (!tracking && config->aim.enabled && scopeHeld && fireHeld) {
             aimStep(display, *config, snapshot, attributes.width, attributes.height);
         }
-        if (config->trigger.enabled &&
+        // 静默锁头：按住触发键时由本进程完成「贴头 + 点击 + 归位」，
+        // 玩家不需要把准星放到敌人身上。与普通扳机互斥，否则一次按键会打出两发。
+        const bool silentHeld =
+            config->silent.key <= 0 || buttonDown(display, config->silent.key);
+        const bool silentFired =
+            config->silent.enabled && silentHeld &&
+            silentStep(display, *config, snapshot, attributes.width, attributes.height);
+        if (!silentFired && config->trigger.enabled &&
             (config->trigger.key <= 0 || buttonDown(display, config->trigger.key))) {
             triggerStep(display, *config, snapshot);
         }
@@ -341,6 +356,59 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
     }
 }
 
+bool Features::trackStep(void* displayPtr, const Config& config, const Snapshot& snapshot,
+                         int width, int height) {
+    Display* display = static_cast<Display*>(displayPtr);
+    const float centerX = static_cast<float>(width) * 0.5f;
+    const float centerY = static_cast<float>(height) * 0.5f;
+
+    const PlayerInfo* best = nullptr;
+    bool bestVisible = false;
+    float bestMetric = 0.f;
+
+    for (const PlayerInfo& player : snapshot.players) {
+        if (player.health <= 0) continue;
+        if (config.track.teamCheck && player.team == snapshot.localTeam) continue;
+        if (config.track.maxDistance > 0.f && player.distance > config.track.maxDistance) continue;
+
+        const float dx = player.headScreen.x - centerX;
+        const float dy = player.headScreen.y - centerY;
+        const float distance = std::sqrt(dx * dx + dy * dy);
+        // fovPixels = 0 表示全屏：不设半径，屏幕上任何位置的敌人都是候选。
+        if (config.track.fovPixels > 0.f && distance >= config.track.fovPixels) continue;
+
+        const bool visible = player.visible;
+        bool better = best == nullptr;
+        if (!better) {
+            better = (visible != bestVisible) ? visible : (distance < bestMetric);
+        }
+        if (!better) continue;
+
+        best = &player;
+        bestVisible = visible;
+        bestMetric = distance;
+    }
+    if (!best) return false;
+
+    // 不乘 sensitivityFactor：追踪的目标是「准星落在头上」，留系数会永远差一截。
+    // smooth = 1 时单帧贴合；调大则分摊到多帧，看起来更像手动甩枪。
+    const int steps = std::max(1, config.track.smooth);
+    const int moveX = static_cast<int>(
+        std::lround((best->headScreen.x - centerX) / static_cast<float>(steps)));
+    const int moveY = static_cast<int>(
+        std::lround((best->headScreen.y - centerY) / static_cast<float>(steps)));
+    if (moveX == 0 && moveY == 0) return true;
+
+    XTestFakeRelativeMotionEvent(display, moveX, moveY, CurrentTime);
+    XFlush(display);
+    if (++debugAimTick_ % 200 == 0) {
+        trace("[track] target idx=%d err=(%.1f,%.1f) move=(%d,%d)\n", best->index,
+              static_cast<double>(best->headScreen.x - centerX),
+              static_cast<double>(best->headScreen.y - centerY), moveX, moveY);
+    }
+    return true;
+}
+
 void Features::triggerStep(void* displayPtr, const Config& config, const Snapshot& snapshot) {
     Display* display = static_cast<Display*>(displayPtr);
     if (snapshot.crosshairIndex < 0) return;
@@ -372,6 +440,71 @@ void Features::triggerStep(void* displayPtr, const Config& config, const Snapsho
 
     nextTrigger_ = std::chrono::steady_clock::now() +
                    std::chrono::milliseconds(std::max(1, config.trigger.cooldownMs));
+}
+
+bool Features::silentStep(void* displayPtr, const Config& config, const Snapshot& snapshot,
+                          int width, int height) {
+    Display* display = static_cast<Display*>(displayPtr);
+    const auto now = std::chrono::steady_clock::now();
+    if (now < nextSilent_) return false;
+
+    const float centerX = static_cast<float>(width) * 0.5f;
+    const float centerY = static_cast<float>(height) * 0.5f;
+
+    const PlayerInfo* best = nullptr;
+    bool bestVisible = false;
+    float bestMetric = 0.f;
+    for (const PlayerInfo& player : snapshot.players) {
+        if (player.health <= 0) continue;
+        if (config.silent.teamCheck && player.team == snapshot.localTeam) continue;
+        if (config.silent.maxDistance > 0.f && player.distance > config.silent.maxDistance) continue;
+
+        const float dx = player.headScreen.x - centerX;
+        const float dy = player.headScreen.y - centerY;
+        const float distance = std::sqrt(dx * dx + dy * dy);
+        if (config.silent.fovPixels > 0.f && distance >= config.silent.fovPixels) continue;
+
+        const bool visible = player.visible;
+        bool better = best == nullptr;
+        if (!better) better = (visible != bestVisible) ? visible : (distance < bestMetric);
+        if (!better) continue;
+
+        best = &player;
+        bestVisible = visible;
+        bestMetric = distance;
+    }
+    if (!best) return false;
+
+    // 相对位移直接对齐屏幕像素：鼠标移动 N 像素，准星就移动 N 像素，
+    // 不需要灵敏度系数。贴头后立刻合成点击，等游戏过一个 tick 再归位，
+    // 归位后玩家的准星回到原位，看起来只是闪了一下。
+    const int offsetX = static_cast<int>(std::lround(best->headScreen.x - centerX));
+    const int offsetY = static_cast<int>(std::lround(best->headScreen.y - centerY));
+    if (offsetX != 0 || offsetY != 0) {
+        XTestFakeRelativeMotionEvent(display, offsetX, offsetY, CurrentTime);
+        XFlush(display);
+        // 让 X 先把移动投递给游戏，再按下左键，避免点击发生在旧坐标上。
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    XTestFakeButtonEvent(display, 1, True, CurrentTime);
+    XFlush(display);
+    std::this_thread::sleep_for(std::chrono::milliseconds(std::max(1, config.silent.holdMs)));
+    XTestFakeButtonEvent(display, 1, False, CurrentTime);
+    XFlush(display);
+
+    if (offsetX != 0 || offsetY != 0) {
+        XTestFakeRelativeMotionEvent(display, -offsetX, -offsetY, CurrentTime);
+        XFlush(display);
+    }
+
+    nextSilent_ = std::chrono::steady_clock::now() +
+                  std::chrono::milliseconds(std::max(1, config.silent.cooldownMs));
+    if (++debugAimTick_ % 50 == 0) {
+        trace("[silent] target idx=%d offset=(%d,%d) hold=%dms\n", best->index, offsetX, offsetY,
+              config.silent.holdMs);
+    }
+    return true;
 }
 
 void Features::recoilStep(void* displayPtr, const Config& config, const Snapshot& snapshot,

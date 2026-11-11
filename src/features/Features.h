@@ -23,6 +23,12 @@ private:
     void aimStep(void* display, const Config& config, const Snapshot& snapshot, int width,
                  int height);
     void triggerStep(void* display, const Config& config, const Snapshot& snapshot);
+    // 返回 true 表示本帧已接管准星（找到目标并位移），调用方应跳过自瞄。
+    bool trackStep(void* display, const Config& config, const Snapshot& snapshot, int width,
+                   int height);
+    // 静默锁头：贴头 → 合成点击 → 归位。return true 表示本帧已由静默锁头接管。
+    bool silentStep(void* display, const Config& config, const Snapshot& snapshot, int width,
+                    int height);
     void recoilStep(void* display, const Config& config, const Snapshot& snapshot, int height);
 
     static bool gameActive(void* display, std::uintptr_t gameWindow, int pid);
@@ -33,6 +39,7 @@ private:
     std::thread thread_;
     std::atomic_bool running_{false};
     std::chrono::steady_clock::time_point nextTrigger_{};
+    std::chrono::steady_clock::time_point nextSilent_{};
     Vec2 lastPunch_{};  // 上一帧的后坐力角度，用于只补偿增量
     long debugTick_{0};  // 诊断日志节流计数（门控）
     long debugAimTick_{0};  // 诊断日志节流计数（自瞄）

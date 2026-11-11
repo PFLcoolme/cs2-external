@@ -308,3 +308,83 @@ sudo ./build/cs2_lite                        # 以 root 运行
 
 兼容范围：仅 Linux（`/proc/<pid>/mem`、`python3`）。`WV_SKIP_OFFSETS` 供无 python3 环境或调试用。
 
+## 17. 阶段二十三：子弹追踪（开火锁头）
+
+需求目标：不管准星指向哪里，只要按住触发键，准星立刻拉到最近敌人的头部；持续按住则每帧重新贴合，形成「子弹跟着人走」的效果。
+
+实现方式：
+
+| 项 | 变更点 | 说明 |
+| --- | --- | --- |
+| 配置 | `TrackConfig`（`enabled` / `key` / `fovPixels` / `smooth` / `teamCheck` / `maxDistance`） | `fovPixels = 0` 表示全屏，不做半径筛选，对应「不管打哪」 |
+| 目标选择 | `Features::trackStep()` | 遍历 `Snapshot::players`，跳过死亡与队友，可见者优先、再取屏幕距离最近；`headScreen` 由 `Game` 的 `worldToScreen` 投影（已过滤相机后方） |
+| 位移 | `XTestFakeRelativeMotionEvent` 直接写相对位移 | 不乘 `sensitivityFactor`，`smooth = 1` 时单帧贴合；`smooth > 1` 平分到多帧 |
+| 互斥 | 先于 `aimStep` 执行并返回 `bool` | 两个都写相对位移会在一帧内互相拉扯，追踪一旦接管本帧就跳过自瞄 |
+| 界面 | 自瞄页新增「子弹追踪（锁头）」「过滤队友」、半径（0 显示为「全屏」）、平滑、触发键 | 触发键沿用 `mouseKeyCombo()`，只提供 不限/左键/中键/右键 |
+
+依赖 API：`XTestFakeRelativeMotionEvent`、`XFlush`（libXtst，项目既有依赖）。
+
+潜在风险：
+
+- 外部只读实现无法改写服务端弹道，本质是「开火前把视角钉在头部」；命中判定仍由服务器按客户端视角结算。
+- 与后坐力抵消同时开启会互相拉扯：追踪按头部屏幕坐标重定位，后坐力按 punch 增量补偿。建议二选一，或把后坐力强度调低。
+- `headScreen` 的屏幕原点由视口尺寸推导，纯全屏下正确；窗口模式会有固定偏移，与既有自瞄一致。
+
+兼容范围：X11 + XTest。Wayland 原生会话下 XTest 不可用（与既有自瞄、扳机同限制）。
+
+## 18. 阶段二十四：静默锁头（不需瞄准即命中）
+
+需求目标：准星完全不对着敌人，只要想开枪就能打到头部。
+
+技术边界：本仓库是外部只读架构（`/proc/<pid>/mem` 以 `O_RDONLY` 打开），不写游戏内存。真正的 silent aim 需要在 `CreateMove` 之后篡改 `CUserCmd.viewangles`，外部实现要求：
+1. `mem` 改为 `O_RDWR`（或 ptrace），与「只读」设计冲突；
+2. 目标结构在活体内存中可定位且可验证（当前 schema 未暴露 `CUserCmd`，没有权威偏移来源）。
+
+两条都不满足，因此不写内存、不臆造 usercmd 偏移。改为在输入层实现等效效果：**开火瞬间由程序自己把准星落到头部、合成点击、再归位**。
+
+实现方式：
+
+| 项 | 变更点 | 说明 |
+| --- | --- | --- |
+| 配置 | `SilentConfig`（`enabled` / `key` / `holdMs` / `cooldownMs` / `fovPixels` / `teamCheck` / `maxDistance`） | `key` 默认鼠标中键，避免与真实左键开火冲突 |
+| 目标选择 | `Features::silentStep()` | 与 `trackStep` 同一套筛选：死亡跳过、队友过滤、可见优先、屏幕最近 |
+| 快照定位 | `XTestFakeRelativeMotionEvent(±offset)` | 相对位移按屏幕像素直接对齐 `headScreen`，不需灵敏度系数 |
+| 开火 | `XTestFakeButtonEvent(1, press)` + `holdMs` 后 release | `holdMs` 默认 30 ms，覆盖 64 tick 的 15.6 ms 采样窗口，让游戏一定在贴头状态下处理该次输入 |
+| 归位 | 反向相对位移 | 玩家准星回到按下触发键前的朝向，画面只闪一下 |
+| 互斥 | 静默锁头优先，命中则跳过 `triggerStep` | 否则同一次按键会打出两发 |
+
+依赖 API：`XTestFakeRelativeMotionEvent`、`XTestFakeButtonEvent`、`XFlush`、`std::this_thread::sleep_for`。
+
+潜在风险：
+
+- 不是内存级 silent aim：视角仍在贴头期间真实移动 `holdMs`，观感是「瞬闪」，不是完全无痕。
+- `holdMs` 是命中率与观感的直接权衡：低于一个 tick 可能被取样到归位后的角度而打空。
+- 该函数会在特性线程内阻塞 `holdMs`（默认 30 ms），期间自瞄/后坐力暂停；`holdMs` 调的过大（>100）会明显卡顿。
+- 与「子弹追踪」同开时两者都抢准星，建议只开一个。
+
+兼容范围：X11 + XTest。
+
+
+## 19. 阶段二十五：功能单列 + 右键参数弹层
+
+需求目标：面板不再用左侧标签分页，一个功能直接占一行；该功能的参数收进右键弹层，右键点行即可调。
+
+实现方式：
+
+| 项 | 变更点 | 说明 |
+| --- | --- | --- |
+| 布局 | `Menu::buildUi()` | 去掉左侧导航与 `QStackedWidget`，改 `QScrollArea`（`maxHeight=384`，横滚关闭）内 `QVBoxLayout` 单列行表，分「透 视 / 自 瞄 / 扳 机 / 日 志」四段 |
+| 行 | `Menu::makeRow()` | `QWidget#row` + `QCheckBox`（功能开关）+ 右侧 `QLabel#hint`；有参数的行走「右键参数」提示 |
+| 弹层 | `Menu::attachParams()` / `ensurePopup()` | `Qt::Popup` 子窗口，行与勾选框都挂 `CustomContextMenu`；首次右键惰性构建并缓存到 `QHash<QString, QWidget*> popups_`，之后再右键只 `move/show/raise` |
+| 落盘 | `Menu::eventFilter()` | 监听弹层 `QEvent::Hide` → `apply()`；弹层一关即写 `config.json`，不必回底部点保存 |
+| 控件归属 | `buildUi()` | 所有参数控件在构造期一次创建（父为 `Menu`），由弹层布局接管；`apply()` / `syncFrom()` 字段对应关系不变 |
+
+依赖 API：`QScrollArea`、`QWidget(Qt::Popup)`、`QEvent::Hide`、`QWidget::customContextMenuRequested`、`QWidget::mapToGlobal`。
+
+潜在风险：
+
+- `Qt::Popup` 在部分合成器下会单独占一个覆盖窗口；无合成器的 X11 为普通子窗口，焦点丢失由 Qt 自己处理。
+- 弹层关闭才落盘：只改勾选框、既不开弹层也不点「应用并保存」时不会写入，底部按钮仍保留为兜底路径。
+- 行数增加（当前 17 行）后列表超出 384 px 需要滚动，鼠标滚轮在列表内有效。
+
+兼容范围：Qt6 Widgets（X11 / Wayland 均可，弹层为纯 Qt 控件，不依赖 XTest）。

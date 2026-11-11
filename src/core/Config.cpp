@@ -150,6 +150,30 @@ Config Config::load(const std::string& path) {
         cfg.recoil.requireFire = o.value("requireFire").toBool(cfg.recoil.requireFire);
     }
 
+    if (root.value("track").isObject()) {
+        const QJsonObject o = root.value("track").toObject();
+        cfg.track.enabled = o.value("enabled").toBool(cfg.track.enabled);
+        cfg.track.key = asInt(o, "key", cfg.track.key);
+        cfg.track.fovPixels = static_cast<float>(o.value("fovPixels").toDouble(cfg.track.fovPixels));
+        cfg.track.smooth = asInt(o, "smooth", cfg.track.smooth);
+        cfg.track.teamCheck = o.value("teamCheck").toBool(cfg.track.teamCheck);
+        cfg.track.maxDistance =
+            static_cast<float>(o.value("maxDistance").toDouble(cfg.track.maxDistance));
+    }
+
+    if (root.value("silent").isObject()) {
+        const QJsonObject o = root.value("silent").toObject();
+        cfg.silent.enabled = o.value("enabled").toBool(cfg.silent.enabled);
+        cfg.silent.key = asInt(o, "key", cfg.silent.key);
+        cfg.silent.holdMs = asInt(o, "holdMs", cfg.silent.holdMs);
+        cfg.silent.cooldownMs = asInt(o, "cooldownMs", cfg.silent.cooldownMs);
+        cfg.silent.fovPixels =
+            static_cast<float>(o.value("fovPixels").toDouble(cfg.silent.fovPixels));
+        cfg.silent.teamCheck = o.value("teamCheck").toBool(cfg.silent.teamCheck);
+        cfg.silent.maxDistance =
+            static_cast<float>(o.value("maxDistance").toDouble(cfg.silent.maxDistance));
+    }
+
     if (root.value("trigger").isObject()) {
         const QJsonObject o = root.value("trigger").toObject();
         cfg.trigger.enabled = o.value("enabled").toBool(cfg.trigger.enabled);
@@ -211,6 +235,25 @@ void Config::save(const std::string& path) const {
     recoilObj["maxDegrees"] = static_cast<double>(recoil.maxDegrees);
     recoilObj["requireFire"] = recoil.requireFire;
     root["recoil"] = recoilObj;
+
+    QJsonObject trackObj;
+    trackObj["enabled"] = track.enabled;
+    trackObj["key"] = track.key;
+    trackObj["fovPixels"] = static_cast<double>(track.fovPixels);
+    trackObj["smooth"] = track.smooth;
+    trackObj["teamCheck"] = track.teamCheck;
+    trackObj["maxDistance"] = static_cast<double>(track.maxDistance);
+    root["track"] = trackObj;
+
+    QJsonObject silentObj;
+    silentObj["enabled"] = silent.enabled;
+    silentObj["key"] = silent.key;
+    silentObj["holdMs"] = silent.holdMs;
+    silentObj["cooldownMs"] = silent.cooldownMs;
+    silentObj["fovPixels"] = static_cast<double>(silent.fovPixels);
+    silentObj["teamCheck"] = silent.teamCheck;
+    silentObj["maxDistance"] = static_cast<double>(silent.maxDistance);
+    root["silent"] = silentObj;
 
     QJsonObject triggerObj;
     triggerObj["enabled"] = trigger.enabled;

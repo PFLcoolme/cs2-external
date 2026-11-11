@@ -855,3 +855,105 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 - 未实机开火：`m_predictableBaseAngle` 在未射击时恒为 0，无法区分「字段正确」与「字段恒 0」。需在实战中打一梭子确认数值随散布变化；若仍恒 0，改用已记录备用的 `m_pCameraServices → m_vecCsViewPunchAngle` 链路。
 - 补偿方向 `dx = -Δyaw`、`dy = +Δpitch` 仍按公开实现约定，方向若相反把强度改负值。
 - 启动自动刷新依赖 `python3` 与仓库目录结构；打包分发（只带走可执行文件）时向上找不到 `tools/`，会走「沿用现有偏移」分支。
+
+# 阶段二十三：子弹追踪（开火锁头）
+
+## 1. 需求
+
+不管准星指向哪里，只要按住触发键，准星立刻拉到最近敌人头部；持续按住则每帧重新贴合。
+
+## 2. 实现
+
+- `src/core/Config.h`：新增 `TrackConfig{enabled, key, fovPixels, smooth, teamCheck, maxDistance}`，挂在 `Config::track`。
+- `src/core/Config.cpp`：`track` 节点 load / save，缺失键走结构体默认值。
+- `src/features/Features.cpp`：新增 `trackStep()`，遍历 `snapshot.players`（跳过死亡、队友、超距），可见者优先、再取屏幕距离最近的 `headScreen`；`fovPixels = 0` 不设半径（全屏）；位移用 `XTestFakeRelativeMotionEvent`，除以 `smooth` 后取整，不乘 `sensitivityFactor`。
+- `src/features/Features.h`：声明 `bool trackStep(...)`。
+- 调用顺序：追踪先执行并返回本帧是否接管；接管则跳过 `aimStep`，避免两者在同一帧互相拉扯。
+- `src/ui/Menu.cpp` / `Menu.h`：自瞄页新增「子弹追踪（锁头）」「过滤队友」、半径（0 显示「全屏」）、平滑、触发键；`apply()` / `syncFrom()` 同步。
+- `config/default.json`：新增 `track` 节点（`enabled=false`，`fovPixels=0`，`smooth=1`，`key=1`）。
+
+## 3. 验证结果
+
+- 构建：`cmake --build build -j8` 成功，0 warning / 0 error。
+- 界面（Xvfb `:97`，1280x800x24）：自瞄页渲染出完整两行新控件（勾选行 + 半径/平滑/触发键行），无裁切。
+- 配置装载：把 `build/config.json` 的 `track` 置 `enabled=true, fovPixels=380, smooth=2` 后启动，面板显示勾选、`380 px`、`2`。
+- 保存往返：点击「应用并保存」后重读 `build/config.json`，`track` 三字段保持 `true / 380 / 2`，未被其它字段覆盖。
+- **未验证**：实机开火贴头效果。当前 CS2 处于非对局状态，无法构造「开火 + 屏幕内有敌人」的时序；`[track]` 诊断行（每 200 次输出）需实战确认。
+
+## 4. 遗留风险
+
+1. 外部只读实现无法改写服务端弹道，本质是开火前把视角钉在头部。
+2. 与后坐力抵消同时开启会互相拉扯（见 PLAN 第 17 节），建议二选一。
+3. `smooth = 1` 时是单帧瞬移，观感极硬；被打断（切窗）后恢复也硬。
+4. Wayland 原生会话无 XTest，功能不可用，与既有自瞄一致。
+
+# 阶段二十四：静默锁头（不需瞄准即命中）
+
+## 1. 需求
+
+「直接内存，准星没瞄准敌人也可以打到」。按技术边界拆成两问：能否写游戏内存做 silent aim，能否在输入层做到同等效果。
+
+## 2. 技术边界结论
+
+- 内存级 silent aim 需要篡改 `CUserCmd.viewangles`。外部进程必须满足：`/proc/<pid>/mem` 以 `O_RDWR` 打开（本仓库明确是 `O_RDONLY` 只读架构），并且活体内存中 `CUserCmd` 可定位。当前 schema 只覆盖实体与 netfield，未暴露 `CUserCmd`，也没有可核验的权威偏移。两个前提都不成立，故**不写内存、不臆造偏移**。
+- 输入层等效方案：程序自己「贴头 → 合成点击 → 归位」，玩家不需要瞄准，命中判定发生在贴头期间，符合「准星没瞄准也可以打到」。
+
+## 3. 实现
+
+- `src/core/Config.h`：新增 `SilentConfig{enabled, key, holdMs, cooldownMs, fovPixels, teamCheck, maxDistance}`，默认 `key=2`（鼠标中键）、`holdMs=30`。
+- `src/core/Config.cpp`：`silent` 节点 load / save。
+- `src/features/Features.cpp`：
+  - `silentStep()`：复用 `trackStep` 的筛选规则（死亡跳过 / 队友过滤 / 可见优先 / 屏幕最近），`fovPixels=0` 为全屏；
+  - 相对位移对齐 `headScreen` → `XTestFakeButtonEvent(1, True)` → `sleep_for(holdMs)` → `Release` → 反向位移归位；
+  - 触发后按 `cooldownMs` 冷却。
+  - `run()`：静默锁头先于普通扳机，命中本帧则跳过 `triggerStep`，避免一次按键两发。
+- `src/features/Features.h`：声明 `silentStep`，新增 `nextSilent_`。
+- `src/ui/Menu.cpp` / `Menu.h`：扳机页新增「静默锁头（自动开火）」「过滤队友」、半径 / 停留 / 触发键，`apply()` / `syncFrom()` 同步。
+- `config/default.json`：新增 `silent` 节点（默认关闭）。
+
+## 4. 验证结果
+
+- 构建：`cmake --build build -j8` 8/8 成功，0 warning / 0 error。
+- 界面（Xvfb `:98`，1280x800x24）：扳机页渲染两行新控件，面板 bbox `420,154 - 858,642`，与加入前尺寸一致（488 高），无裁切、无溢出。
+- 配置装载 + 保存往返：把 `build/config.json` 的 `silent` 置 `enabled=true, holdMs=45, fovPixels=500` 后启动 → 点「应用并保存」→ 重读为 `enabled=True, holdMs=45, fovPixels=500, key=2, teamCheck=True`，字段未被覆盖。
+- **未验证**：真实命中。需要「触发键按下 + 屏幕内有敌人」的对局时序，当前 CS2 不在对局中；`[silent]` 诊断行（每 50 次）需实战确认。
+
+## 5. 遗留风险
+
+1. 观感为「瞬闪」而非完全无痕：贴头期间视角真实移动 `holdMs`。
+2. `holdMs` 太短（<16 ms）可能被服务器取样到归位后角度而打空；太长会明显卡顿特性线程。
+3. 仅 X11 + XTest；Wayland 不可用。
+4. 与「子弹追踪」同开会互抢准星，建议只开一个。
+
+# 阶段二十五：功能单列 + 右键参数弹层
+
+## 1. 需求
+
+「ui改成一个功能直接站一行然后右键下拉可调参」。原有四页标签布局里，一个功能的开关和它的参数分散在同一页的不同行，页面越长越难定位；改为功能一行、参数进右键弹层。
+
+## 2. 实现
+
+- `src/ui/Menu.h`：删除 `tabs_[4]` / `pages_` / `QStackedWidget` 相关成员，新增 `QHash<QString, QWidget*> popups_`、`QHash<QString, std::function<void(QVBoxLayout*)>> popupBuilders_`，以及 `makeRow` / `attachParams` / `ensurePopup` / `eventFilter` 声明；`status_`、`logView_` 与全部参数控件指针保持不变。
+- `src/ui/Menu.cpp`：
+  - `buildUi()`：header → status → 分隔线 → `QScrollArea`（`setWidgetResizable(true)`、`NoFrame`、横滚 `AlwaysOff`、`setMaximumHeight(384)`）内的单列行表 → 底部「恢 复 上 一 次 / 应 用 并 保 存」。
+  - `makeRow()`：`QWidget#row` 内 `QCheckBox` + `addStretch(1)` + 右侧 `QLabel#hint`，行高由 `contentsMargins(8,3,8,3)` 决定。
+  - `attachParams()`：行与勾选框都设 `Qt::CustomContextMenu` 并连 `customContextMenuRequested` → `ensurePopup(title)->move(row->mapToGlobal(pos))->show()`；勾选框要单独接一次，否则点在文字上事件被 `QCheckBox` 吃掉。
+  - `ensurePopup()`：`QWidget(this, Qt::Popup)` + `WA_StyledBackground` + 统一 QSS，标题 + builder 内容 + 「松开即生效」脚注，构建后缓存。
+  - `eventFilter()`：弹层 `QEvent::Hide` → `apply()`，右键调完即落盘。
+  - QSS 追加 `QLabel#section`、`QWidget#row(/(:hover))`、`QWidget#popup`。
+- `apply()` / `persist()` / `restoreLast()` / `syncFrom()` 逻辑未改，仅位置移到文件末尾。
+
+## 3. 验证结果
+
+- 构建：`cmake --build build -j8` 5/5 成功，0 warning / 0 error。
+- 界面（Xvfb `:97`，1280x800x24，`WV_SKIP_OFFSETS=1`）：窗口 `440x533`，行表可见 13 行 + 分段标题；滚轮下滚后可见「自 瞄 / 扳 机 / 日 志」与日志区、底部按钮。
+- 右键弹层：伤害浮字 `258x147`、「自瞄参数」`258x338`，弹层底边框在 `y=639`，未越出窗口/屏幕。
+- 弹层落盘：右键伤害浮字 → 在弹层内把「显示时长」从 `1234` 上调两次 → 点外部关闭 → `build/config.json` 的 `esp.damageMs` 变为 `1236`；右键自瞄 → 平滑 `9`→`10` → 关闭后 `aim.smooth=10`。
+- 勾选框：点击「自瞄」行勾选框，指示器由空心变实心，弹层关闭后 `aim.enabled=true` 落盘（再点回 false）。
+- 无参数行（方框 / 血量条 / 过滤队友等）右键不出弹层，符合预期。
+
+## 4. 遗留风险
+
+1. 只有「弹层关闭」和底部「应用并保存」两条落盘路径；只改勾选框不会自动保存。
+2. 行表超过 384 px 后必须滚动，滚轮焦点在列表内才生效（面板其他区域滚轮无效）。
+3. `Qt::Popup` 弹层位置跟行绑定，窗口拖到屏幕下缘时可能被裁；当前未做翻转/夹取。

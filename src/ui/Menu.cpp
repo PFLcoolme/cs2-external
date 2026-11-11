@@ -3,7 +3,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QFrame>
@@ -18,12 +20,11 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScreen>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QSpinBox>
-#include <QStackedWidget>
 #include <QStringList>
 #include <QTimer>
-
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -55,20 +56,19 @@ QLabel#status {
 }
 QLabel#hint { color: #9AA0A6; font-size: 10px; }
 QLabel#warn { color: #F2F3F5; font-size: 10px; font-weight: 700; }
-QFrame#rule { background: rgba(255, 255, 255, 70); border: none; min-height: 1px; max-height: 1px; }
-QFrame#vrule { background: rgba(255, 255, 255, 52); border: none; min-width: 1px; max-width: 1px; }
-QPushButton#tab {
-    background: transparent;
-    border: none;
-    border-radius: 7px;
-    color: #B4B9BF;
-    font-size: 12px;
-    letter-spacing: 2px;
-    text-align: left;
-    padding: 6px 8px;
+QLabel#section {
+    color: #6E747B;
+    font-size: 10px;
+    letter-spacing: 3px;
+    padding: 6px 2px 2px 2px;
 }
-QPushButton#tab:hover { background: rgba(255, 255, 255, 18); color: #F2F3F5; }
-QPushButton#tab:checked { background: rgba(255, 255, 255, 235); color: #0F1113; }
+QWidget#row { border-radius: 6px; }
+QWidget#row:hover { background: rgba(255, 255, 255, 16); }
+QWidget#popup {
+    background: #16191E;
+    border: 1px solid rgba(255, 255, 255, 40);
+}
+QFrame#rule { background: rgba(255, 255, 255, 70); border: none; min-height: 1px; max-height: 1px; }
 QCheckBox { spacing: 7px; color: #E9EBEE; }
 QCheckBox:hover { color: #FFFFFF; }
 QCheckBox::indicator {
@@ -198,6 +198,18 @@ QFrame* rule(QWidget* parent) {
     return line;
 }
 
+// 参数弹层里的一行：左标签、右控件。
+QWidget* paramRow(const QString& text, QWidget* control, QWidget* parent) {
+    auto* row = new QWidget(parent);
+    auto* layout = new QHBoxLayout(row);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(8);
+    layout->addWidget(fieldLabel(text, row));
+    layout->addStretch(1);
+    layout->addWidget(control);
+    return row;
+}
+
 // 上一次配置的备份路径：与主配置同目录，每次保存前主配置会被复制到这里。
 QString backupPath(const std::string& path) {
     return QString::fromStdString(path) + ".bak";
@@ -241,8 +253,8 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
             status_->setText(QString::fromStdString(game_.status()));
         }
 
-        // 日志页可见时才读文件，其他页面零开销。
-        if (pages_ && logView_ && pages_->currentIndex() == 3) {
+        // 日志区可见时才读文件，滚出视野后零开销。
+        if (logView_ && logView_->isVisible()) {
             logView_->setPlainText(tailOfLog("/tmp/wv_lite.log"));
             logView_->verticalScrollBar()->setValue(logView_->verticalScrollBar()->maximum());
         }
@@ -299,6 +311,77 @@ void Menu::mouseMoveEvent(QMouseEvent* event) {
     QWidget::mouseMoveEvent(event);
 }
 
+bool Menu::eventFilter(QObject* watched, QEvent* event) {
+    // 参数弹层一关就落盘：右键调完即生效，不必再回到底部点保存。
+    if (event->type() == QEvent::Hide &&
+        popups_.values().contains(static_cast<QWidget*>(watched))) {
+        apply();
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+QWidget* Menu::makeRow(QCheckBox* toggle, const QString& name, const QString& hint) {
+    auto* row = new QWidget(this);
+    row->setObjectName("row");
+    auto* layout = new QHBoxLayout(row);
+    layout->setContentsMargins(8, 3, 8, 3);
+    layout->setSpacing(8);
+
+    toggle->setText(name);
+    toggle->setCursor(Qt::PointingHandCursor);
+    layout->addWidget(toggle);
+    layout->addStretch(1);
+
+    auto* hintLabel = new QLabel(hint, row);
+    hintLabel->setObjectName("hint");
+    layout->addWidget(hintLabel);
+    return row;
+}
+
+void Menu::attachParams(QWidget* row, QCheckBox* toggle, const QString& title,
+                        const std::function<void(QVBoxLayout*)>& build) {
+    popupBuilders_.insert(title, build);
+    // 右键在行内任意位置都能出弹层：勾选框本身也要单独接一次，
+    // 否则点在文字上时事件被 QCheckBox 吃掉，父行收不到右键。
+    for (QWidget* target : {row, static_cast<QWidget*>(toggle)}) {
+        target->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(target, &QWidget::customContextMenuRequested, this,
+                [this, row, title](const QPoint& pos) {
+                    QWidget* popup = ensurePopup(title);
+                    popup->move(row->mapToGlobal(pos));
+                    popup->show();
+                    popup->raise();
+                });
+    }
+}
+
+QWidget* Menu::ensurePopup(const QString& title) {
+    if (QWidget* existing = popups_.value(title, nullptr)) return existing;
+
+    auto* popup = new QWidget(this, Qt::Popup);
+    popup->setObjectName("popup");
+    popup->setAttribute(Qt::WA_StyledBackground, true);
+    popup->setStyleSheet(kStyle);
+    popup->setMinimumWidth(258);
+
+    auto* layout = new QVBoxLayout(popup);
+    layout->setContentsMargins(14, 12, 14, 12);
+    layout->setSpacing(8);
+    auto* heading = new QLabel(title, popup);
+    heading->setObjectName("field");
+    layout->addWidget(heading);
+
+    if (const auto build = popupBuilders_.value(title); build) build(layout);
+
+    auto* foot = new QLabel("松开即生效", popup);
+    foot->setObjectName("hint");
+    layout->addWidget(foot);
+
+    popup->installEventFilter(this);
+    popups_.insert(title, popup);
+    return popup;
+}
+
 void Menu::buildUi() {
     const std::shared_ptr<Config> config = state_.config.load();
     const Config initial = config ? *config : Config{};
@@ -328,115 +411,62 @@ void Menu::buildUi() {
     root->addWidget(status_);
     root->addWidget(rule(this));
 
-    // ---- 主体：左侧类别导航 + 右侧内容页 ----
-    auto* body = new QHBoxLayout();
-    body->setSpacing(14);
+    // ---- 主体：一个功能一行，参数收进右键弹层 ----
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setMaximumHeight(384);
+    auto* list = new QWidget(scroll);
+    auto* listLayout = new QVBoxLayout(list);
+    listLayout->setContentsMargins(0, 0, 6, 0);
+    listLayout->setSpacing(2);
+    scroll->setWidget(list);
+    root->addWidget(scroll, 1);
 
-    // 类别导航：四个互斥的可选中按钮，点击只切右侧分页。
-    // 不用 QListWidget：列表项会被主体区高度裁掉，按钮列不会。
-    auto* navCol = new QVBoxLayout();
-    navCol->setSpacing(4);
-    navCol->setContentsMargins(0, 0, 0, 0);
-    const QStringList tabNames{"透 视", "自 瞄", "扳 机", "日 志"};
-    for (int i = 0; i < tabNames.size(); ++i) {
-        auto* tab = new QPushButton(tabNames.at(i), this);
-        tab->setObjectName("tab");
-        tab->setCheckable(true);
-        tab->setAutoExclusive(true);
-        tab->setCursor(Qt::PointingHandCursor);
-        tab->setFocusPolicy(Qt::NoFocus);
-        tab->setFixedSize(88, 30);
-        navCol->addWidget(tab);
-        tabs_[i] = tab;
-        connect(tab, &QPushButton::clicked, this, [this, i] { pages_->setCurrentIndex(i); });
-    }
-    navCol->addStretch(1);
-
-    pages_ = new QStackedWidget(this);
-    pages_->setObjectName("pages");
-
-    // ===== 页一：透视 =====
-    auto* espPage = new QWidget(this);
-    auto* espPageLayout = new QVBoxLayout(espPage);
-    espPageLayout->setContentsMargins(0, 0, 0, 0);
-    espPageLayout->setSpacing(8);
-
-    auto* espGrid = new QGridLayout();
-    espGrid->setHorizontalSpacing(10);
-    espGrid->setVerticalSpacing(6);
-
-    espEnabled_ = new QCheckBox("启用透视", this);
+    // ---- 控件构造（参数控件不在页面里，只在右键弹层里出现一次）----
+    espEnabled_ = new QCheckBox(this);
     espEnabled_->setChecked(initial.esp.enabled);
-    espBox_ = new QCheckBox("方框", this);
+    espBox_ = new QCheckBox(this);
     espBox_->setChecked(initial.esp.box);
-    espHealth_ = new QCheckBox("血量条", this);
+    espHealth_ = new QCheckBox(this);
     espHealth_->setChecked(initial.esp.health);
-    espHealthText_ = new QCheckBox("血量数值", this);
+    espHealthText_ = new QCheckBox(this);
     espHealthText_->setChecked(initial.esp.healthText);
-    espArmor_ = new QCheckBox("护甲数值", this);
+    espArmor_ = new QCheckBox(this);
     espArmor_->setChecked(initial.esp.armor);
-    espDamage_ = new QCheckBox("伤害数值", this);
+    espDamage_ = new QCheckBox(this);
     espDamage_->setChecked(initial.esp.damageNumbers);
-    espDistance_ = new QCheckBox("距离", this);
+    espDistance_ = new QCheckBox(this);
     espDistance_->setChecked(initial.esp.distance);
-    espSkeleton_ = new QCheckBox("骨骼连线", this);
+    espSkeleton_ = new QCheckBox(this);
     espSkeleton_->setChecked(initial.esp.skeleton);
-    espTeam_ = new QCheckBox("过滤队友", this);
+    espTeam_ = new QCheckBox(this);
     espTeam_->setChecked(initial.esp.teamCheck);
-    espVisibility_ = new QCheckBox("遮挡虚线", this);
+    espVisibility_ = new QCheckBox(this);
     espVisibility_->setChecked(initial.esp.visibilityCheck);
 
-    espGrid->addWidget(espEnabled_, 0, 0);
-    espGrid->addWidget(espBox_, 0, 1);
-    espGrid->addWidget(espHealth_, 1, 0);
-    espGrid->addWidget(espHealthText_, 1, 1);
-    espGrid->addWidget(espDistance_, 2, 0);
-    espGrid->addWidget(espSkeleton_, 2, 1);
-    espGrid->addWidget(espTeam_, 3, 0);
-    espGrid->addWidget(espVisibility_, 3, 1);
-    espGrid->addWidget(espArmor_, 4, 0);
-    espGrid->addWidget(espDamage_, 4, 1);
-    espPageLayout->addLayout(espGrid);
-
-    auto* radarRow = new QHBoxLayout();
-    radarRow->setSpacing(8);
-    espRadar_ = new QCheckBox("2D 雷达", this);
+    espRadar_ = new QCheckBox(this);
     espRadar_->setChecked(initial.esp.radar);
     espRadarRange_ = new QSpinBox(this);
     espRadarRange_->setRange(5, 300);
     espRadarRange_->setSuffix(" m");
     espRadarRange_->setValue(static_cast<int>(initial.esp.radarRange));
-    espRadarRange_->setFixedWidth(74);
-    radarRow->addWidget(espRadar_);
-    radarRow->addStretch(1);
-    radarRow->addWidget(fieldLabel("半径", this));
-    radarRow->addWidget(espRadarRange_);
-    espPageLayout->addLayout(radarRow);
+    espRadarRange_->setFixedWidth(78);
 
-    // 残影轨迹 + 最低血量描边：只用屏幕坐标与已有血量，不依赖新偏移。
-    auto* effectRow = new QHBoxLayout();
-    effectRow->setSpacing(8);
-    espTrail_ = new QCheckBox("残影轨迹", this);
+    espTrail_ = new QCheckBox(this);
     espTrail_->setChecked(initial.esp.trail);
     espTrailMs_ = new QSpinBox(this);
     espTrailMs_->setRange(50, 1000);
     espTrailMs_->setSuffix(" ms");
     espTrailMs_->setValue(initial.esp.trailMs);
-    espTrailMs_->setFixedWidth(80);
-    espHighlight_ = new QCheckBox("残血描边", this);
-    espHighlight_->setChecked(initial.esp.highlight);
-    effectRow->addWidget(espTrail_);
-    effectRow->addWidget(espTrailMs_);
-    effectRow->addWidget(espHighlight_);
-    effectRow->addStretch(1);
-    espPageLayout->addLayout(effectRow);
+    espTrailMs_->setFixedWidth(84);
 
-    // 掉血浮字：保留时长与颜色可调。
     espDamageMs_ = new QSpinBox(this);
     espDamageMs_->setRange(100, 3000);
     espDamageMs_->setSuffix(" ms");
     espDamageMs_->setValue(initial.esp.damageMs);
-    espDamageMs_->setFixedWidth(84);
+    espDamageMs_->setFixedWidth(88);
     espDamageColor_ = new QComboBox(this);
     espDamageColor_->addItem("橙红", 0xFF8460);
     espDamageColor_->addItem("纯白", 0xFFFFFF);
@@ -444,185 +474,209 @@ void Menu::buildUi() {
     espDamageColor_->addItem("青蓝", 0x6CC8FF);
     const int colorIndex = espDamageColor_->findData(initial.esp.damageColor);
     espDamageColor_->setCurrentIndex(colorIndex >= 0 ? colorIndex : 0);
-    espDamageColor_->setFixedWidth(78);
-    auto* damageRow = new QHBoxLayout();
-    damageRow->setSpacing(8);
-    damageRow->addWidget(fieldLabel("浮字", this));
-    damageRow->addWidget(espDamageMs_);
-    damageRow->addWidget(espDamageColor_);
-    damageRow->addStretch(1);
-    espPageLayout->addLayout(damageRow);
+    espDamageColor_->setFixedWidth(84);
 
-    espPageLayout->addStretch(1);
-    pages_->addWidget(espPage);
+    espHighlight_ = new QCheckBox(this);
+    espHighlight_->setChecked(initial.esp.highlight);
 
-    // ===== 页二：自瞄 =====
-    auto* aimPage = new QWidget(this);
-    auto* aimPageLayout = new QVBoxLayout(aimPage);
-    aimPageLayout->setContentsMargins(0, 0, 0, 0);
-    aimPageLayout->setSpacing(8);
-
-    aimEnabled_ = new QCheckBox("启用自瞄", this);
+    aimEnabled_ = new QCheckBox(this);
     aimEnabled_->setChecked(initial.aim.enabled);
-    aimTeam_ = new QCheckBox("过滤队友", this);
+    aimTeam_ = new QCheckBox(this);
     aimTeam_->setChecked(initial.aim.teamCheck);
     aimStrategy_ = new QComboBox(this);
     aimStrategy_->addItem("屏幕最近");
     aimStrategy_->addItem("血量最低");
     aimStrategy_->addItem("世界最近");
     aimStrategy_->setCurrentIndex(std::clamp(initial.aim.strategy, 0, 2));
+    aimStrategy_->setFixedWidth(120);
     aimSmooth_ = new QSpinBox(this);
     aimSmooth_->setRange(1, 40);
     aimSmooth_->setValue(initial.aim.smooth);
+    aimSmooth_->setFixedWidth(66);
     aimFov_ = new QSpinBox(this);
     aimFov_->setRange(20, 1200);
     aimFov_->setSuffix(" px");
     aimFov_->setValue(static_cast<int>(initial.aim.fovPixels));
+    aimFov_->setFixedWidth(84);
     aimSensitivity_ = new QDoubleSpinBox(this);
     aimSensitivity_->setRange(0.05, 3.0);
     aimSensitivity_->setSingleStep(0.05);
     aimSensitivity_->setValue(initial.aim.sensitivityFactor);
-
-    // 数字框固定宽度、不参与拉伸：整列对齐靠左，避免宽输入框把标签挤到右侧。
-    aimSmooth_->setFixedWidth(60);
-    aimFov_->setFixedWidth(80);
-    aimSensitivity_->setFixedWidth(80);
-
-    auto* aimToggles = new QHBoxLayout();
-    aimToggles->setSpacing(10);
-    aimToggles->addWidget(aimEnabled_);
-    aimToggles->addWidget(aimTeam_);
-    aimToggles->addStretch(1);
-    aimPageLayout->addLayout(aimToggles);
-
-    auto* aimGrid = new QGridLayout();
-    aimGrid->setHorizontalSpacing(8);
-    aimGrid->setVerticalSpacing(6);
-    aimGrid->addWidget(fieldLabel("策略", this), 0, 0);
-    aimGrid->addWidget(aimStrategy_, 0, 1, 1, 4);
-    aimGrid->addWidget(fieldLabel("平滑", this), 1, 0);
-    aimGrid->addWidget(aimSmooth_, 1, 1);
-    aimGrid->addWidget(fieldLabel("范围", this), 1, 2);
-    aimGrid->addWidget(aimFov_, 1, 3);
-    aimGrid->addWidget(fieldLabel("灵敏度", this), 2, 0);
-    aimGrid->addWidget(aimSensitivity_, 2, 1);
-    aimGrid->setColumnStretch(4, 1);
-    aimPageLayout->addLayout(aimGrid);
-
-    // 快捷键：开镜 / 开火。原来只能改 JSON，这里做成下拉。
+    aimSensitivity_->setFixedWidth(84);
     aimScopeKey_ = mouseKeyCombo(this, initial.aim.scopeKey);
     aimFireKey_ = mouseKeyCombo(this, initial.aim.fireKey);
-    auto* aimKeyRow = new QHBoxLayout();
-    aimKeyRow->setSpacing(8);
-    aimKeyRow->addWidget(fieldLabel("开镜键", this));
-    aimKeyRow->addWidget(aimScopeKey_);
-    aimKeyRow->addWidget(fieldLabel("开火键", this));
-    aimKeyRow->addWidget(aimFireKey_);
-    aimKeyRow->addStretch(1);
-    aimPageLayout->addLayout(aimKeyRow);
 
-    // 后坐力抵消：独立于自瞄，取 m_aimPunchAngle（缺失时退回 m_aimPunchCache）。
-    auto* recoilToggles = new QHBoxLayout();
-    recoilToggles->setSpacing(10);
-    recoilEnabled_ = new QCheckBox("后坐力抵消", this);
+    recoilEnabled_ = new QCheckBox(this);
     recoilEnabled_->setChecked(initial.recoil.enabled);
-    recoilRequireFire_ = new QCheckBox("仅开火时", this);
+    recoilRequireFire_ = new QCheckBox(this);
     recoilRequireFire_->setChecked(initial.recoil.requireFire);
-    recoilToggles->addWidget(recoilEnabled_);
-    recoilToggles->addWidget(recoilRequireFire_);
-    recoilToggles->addStretch(1);
-    aimPageLayout->addLayout(recoilToggles);
-
     recoilStrength_ = new QDoubleSpinBox(this);
     recoilStrength_->setRange(-3.0, 3.0);
     recoilStrength_->setSingleStep(0.1);
     recoilStrength_->setDecimals(2);
     recoilStrength_->setValue(initial.recoil.strength);
-    recoilStrength_->setFixedWidth(70);
+    recoilStrength_->setFixedWidth(74);
     recoilMax_ = new QSpinBox(this);
     recoilMax_->setRange(1, 60);
     recoilMax_->setSuffix(" °");
     recoilMax_->setValue(static_cast<int>(initial.recoil.maxDegrees));
-    recoilMax_->setFixedWidth(70);
-    auto* recoilRow = new QHBoxLayout();
-    recoilRow->setSpacing(8);
-    recoilRow->addWidget(fieldLabel("强度", this));
-    recoilRow->addWidget(recoilStrength_);
-    recoilRow->addWidget(fieldLabel("上限", this));
-    recoilRow->addWidget(recoilMax_);
-    recoilRow->addStretch(1);
-    aimPageLayout->addLayout(recoilRow);
+    recoilMax_->setFixedWidth(74);
 
-    aimPageLayout->addStretch(1);
-    pages_->addWidget(aimPage);
+    trackEnabled_ = new QCheckBox(this);
+    trackEnabled_->setChecked(initial.track.enabled);
+    trackTeam_ = new QCheckBox(this);
+    trackTeam_->setChecked(initial.track.teamCheck);
+    trackFov_ = new QSpinBox(this);
+    trackFov_->setRange(0, 2000);
+    trackFov_->setSpecialValueText("全屏");
+    trackFov_->setSuffix(" px");
+    trackFov_->setValue(static_cast<int>(initial.track.fovPixels));
+    trackFov_->setFixedWidth(92);
+    trackSmooth_ = new QSpinBox(this);
+    trackSmooth_->setRange(1, 20);
+    trackSmooth_->setValue(initial.track.smooth);
+    trackSmooth_->setFixedWidth(66);
+    trackKey_ = mouseKeyCombo(this, initial.track.key);
 
-    // ===== 页三：扳机 =====
-    auto* triggerPage = new QWidget(this);
-    auto* triggerPageLayout = new QVBoxLayout(triggerPage);
-    triggerPageLayout->setContentsMargins(0, 0, 0, 0);
-    triggerPageLayout->setSpacing(8);
-
-    triggerEnabled_ = new QCheckBox("启用扳机", this);
+    triggerEnabled_ = new QCheckBox(this);
     triggerEnabled_->setChecked(initial.trigger.enabled);
     triggerDelay_ = new QSpinBox(this);
     triggerDelay_->setRange(1, 500);
     triggerDelay_->setSuffix(" ms");
     triggerDelay_->setValue(initial.trigger.delayMs);
+    triggerDelay_->setFixedWidth(82);
     triggerCooldown_ = new QSpinBox(this);
     triggerCooldown_->setRange(10, 2000);
     triggerCooldown_->setSuffix(" ms");
     triggerCooldown_->setValue(initial.trigger.cooldownMs);
-
-    triggerDelay_->setFixedWidth(78);
-    triggerCooldown_->setFixedWidth(78);
-
-    triggerPageLayout->addWidget(triggerEnabled_);
-
-    auto* triggerGrid = new QGridLayout();
-    triggerGrid->setHorizontalSpacing(8);
-    triggerGrid->setVerticalSpacing(6);
-    triggerGrid->addWidget(fieldLabel("按住", this), 0, 0);
-    triggerGrid->addWidget(triggerDelay_, 0, 1);
-    triggerGrid->addWidget(fieldLabel("冷却", this), 0, 2);
-    triggerGrid->addWidget(triggerCooldown_, 0, 3);
-    triggerGrid->setColumnStretch(4, 1);
-    triggerPageLayout->addLayout(triggerGrid);
-
+    triggerCooldown_->setFixedWidth(82);
     triggerKey_ = mouseKeyCombo(this, initial.trigger.key);
-    auto* triggerKeyRow = new QHBoxLayout();
-    triggerKeyRow->setSpacing(8);
-    triggerKeyRow->addWidget(fieldLabel("触发键", this));
-    triggerKeyRow->addWidget(triggerKey_);
-    triggerKeyRow->addStretch(1);
-    triggerPageLayout->addLayout(triggerKeyRow);
 
-    triggerPageLayout->addStretch(1);
-    pages_->addWidget(triggerPage);
+    silentEnabled_ = new QCheckBox(this);
+    silentEnabled_->setChecked(initial.silent.enabled);
+    silentTeam_ = new QCheckBox(this);
+    silentTeam_->setChecked(initial.silent.teamCheck);
+    silentFov_ = new QSpinBox(this);
+    silentFov_->setRange(0, 2000);
+    silentFov_->setSpecialValueText("全屏");
+    silentFov_->setSuffix(" px");
+    silentFov_->setValue(static_cast<int>(initial.silent.fovPixels));
+    silentFov_->setFixedWidth(92);
+    silentHold_ = new QSpinBox(this);
+    silentHold_->setRange(5, 200);
+    silentHold_->setSuffix(" ms");
+    silentHold_->setValue(initial.silent.holdMs);
+    silentHold_->setFixedWidth(82);
+    silentKey_ = mouseKeyCombo(this, initial.silent.key);
 
-    // ===== 页四：日志 =====
-    auto* logPage = new QWidget(this);
-    auto* logLayout = new QVBoxLayout(logPage);
-    logLayout->setContentsMargins(0, 0, 0, 0);
-    logLayout->setSpacing(6);
-    logView_ = new QPlainTextEdit(logPage);
+    // ---- 行表：一个功能一行 ----
+    auto addSection = [this, listLayout](const QString& text) {
+        auto* label = new QLabel(text, this);
+        label->setObjectName("section");
+        listLayout->addSpacing(2);
+        listLayout->addWidget(label);
+    };
+
+    addSection("透 视");
+
+    listLayout->addWidget(makeRow(espEnabled_, "玩家透视", ""));
+    listLayout->addWidget(makeRow(espBox_, "方框", ""));
+    listLayout->addWidget(makeRow(espHealth_, "血量条", ""));
+    listLayout->addWidget(makeRow(espHealthText_, "血量数值", ""));
+    listLayout->addWidget(makeRow(espArmor_, "护甲数值", ""));
+    listLayout->addWidget(makeRow(espDistance_, "距离", ""));
+    listLayout->addWidget(makeRow(espSkeleton_, "骨骼连线", ""));
+    listLayout->addWidget(makeRow(espVisibility_, "遮挡虚线", ""));
+    listLayout->addWidget(makeRow(espTeam_, "过滤队友", ""));
+
+    {
+        QWidget* row = makeRow(espDamage_, "伤害浮字", "右键参数");
+        attachParams(row, espDamage_, "伤害浮字", [this, row](QVBoxLayout* layout) {
+            layout->addWidget(paramRow("显示时长", espDamageMs_, row));
+            layout->addWidget(paramRow("颜色", espDamageColor_, row));
+        });
+        listLayout->addWidget(row);
+    }
+    {
+        QWidget* row = makeRow(espTrail_, "残影轨迹", "右键参数");
+        attachParams(row, espTrail_, "残影轨迹", [this, row](QVBoxLayout* layout) {
+            layout->addWidget(paramRow("拖尾时长", espTrailMs_, row));
+        });
+        listLayout->addWidget(row);
+    }
+    listLayout->addWidget(makeRow(espHighlight_, "残血描边", ""));
+    {
+        QWidget* row = makeRow(espRadar_, "2D 雷达", "右键参数");
+        attachParams(row, espRadar_, "2D 雷达", [this, row](QVBoxLayout* layout) {
+            layout->addWidget(paramRow("半径", espRadarRange_, row));
+        });
+        listLayout->addWidget(row);
+    }
+
+    addSection("自 瞄");
+    {
+        QWidget* row = makeRow(aimEnabled_, "自瞄", "右键参数");
+        attachParams(row, aimEnabled_, "自瞄参数", [this, row](QVBoxLayout* layout) {
+            layout->addWidget(paramRow("策略", aimStrategy_, row));
+            layout->addWidget(paramRow("平滑", aimSmooth_, row));
+            layout->addWidget(paramRow("范围", aimFov_, row));
+            layout->addWidget(paramRow("灵敏度", aimSensitivity_, row));
+            layout->addWidget(paramRow("开镜键", aimScopeKey_, row));
+            layout->addWidget(paramRow("开火键", aimFireKey_, row));
+            layout->addWidget(paramRow("过滤队友", aimTeam_, row));
+        });
+        listLayout->addWidget(row);
+    }
+    {
+        QWidget* row = makeRow(recoilEnabled_, "后坐力抵消", "右键参数");
+        attachParams(row, recoilEnabled_, "后坐力抵消", [this, row](QVBoxLayout* layout) {
+            layout->addWidget(paramRow("强度", recoilStrength_, row));
+            layout->addWidget(paramRow("单帧上限", recoilMax_, row));
+            layout->addWidget(paramRow("仅开火时", recoilRequireFire_, row));
+        });
+        listLayout->addWidget(row);
+    }
+    {
+        QWidget* row = makeRow(trackEnabled_, "子弹追踪", "右键参数");
+        attachParams(row, trackEnabled_, "子弹追踪", [this, row](QVBoxLayout* layout) {
+            layout->addWidget(paramRow("半径", trackFov_, row));
+            layout->addWidget(paramRow("平滑", trackSmooth_, row));
+            layout->addWidget(paramRow("触发键", trackKey_, row));
+            layout->addWidget(paramRow("过滤队友", trackTeam_, row));
+        });
+        listLayout->addWidget(row);
+    }
+
+    addSection("扳 机");
+    {
+        QWidget* row = makeRow(triggerEnabled_, "自动扳机", "右键参数");
+        attachParams(row, triggerEnabled_, "自动扳机", [this, row](QVBoxLayout* layout) {
+            layout->addWidget(paramRow("按住", triggerDelay_, row));
+            layout->addWidget(paramRow("冷却", triggerCooldown_, row));
+            layout->addWidget(paramRow("触发键", triggerKey_, row));
+        });
+        listLayout->addWidget(row);
+    }
+    {
+        QWidget* row = makeRow(silentEnabled_, "静默锁头", "右键参数");
+        attachParams(row, silentEnabled_, "静默锁头", [this, row](QVBoxLayout* layout) {
+            layout->addWidget(paramRow("半径", silentFov_, row));
+            layout->addWidget(paramRow("停留", silentHold_, row));
+            layout->addWidget(paramRow("触发键", silentKey_, row));
+            layout->addWidget(paramRow("过滤队友", silentTeam_, row));
+        });
+        listLayout->addWidget(row);
+    }
+
+    addSection("日 志");
+    logView_ = new QPlainTextEdit(list);
     logView_->setObjectName("log");
     logView_->setReadOnly(true);
     logView_->setFrameShape(QFrame::NoFrame);
+    logView_->setFixedHeight(96);
     logView_->setPlainText(tailOfLog("/tmp/wv_lite.log"));
-    logLayout->addWidget(logView_, 1);
-    pages_->addWidget(logPage);
-
-    auto* divider = new QFrame(this);
-    divider->setObjectName("vrule");
-    divider->setFrameShape(QFrame::NoFrame);
-
-    body->addLayout(navCol);
-    body->addWidget(divider);
-    body->addWidget(pages_, 1);
-    root->addLayout(body, 1);
-
-    tabs_[0]->setChecked(true);
-    pages_->setCurrentIndex(0);
+    listLayout->addWidget(logView_);
+    listLayout->addStretch(1);
 
     root->addWidget(rule(this));
 
@@ -700,6 +754,18 @@ void Menu::apply() {
     next.recoil.requireFire = recoilRequireFire_->isChecked();
     next.recoil.strength = static_cast<float>(recoilStrength_->value());
     next.recoil.maxDegrees = static_cast<float>(recoilMax_->value());
+
+    next.track.enabled = trackEnabled_->isChecked();
+    next.track.teamCheck = trackTeam_->isChecked();
+    next.track.fovPixels = static_cast<float>(trackFov_->value());
+    next.track.smooth = trackSmooth_->value();
+    next.track.key = trackKey_->currentData().toInt();
+
+    next.silent.enabled = silentEnabled_->isChecked();
+    next.silent.teamCheck = silentTeam_->isChecked();
+    next.silent.fovPixels = static_cast<float>(silentFov_->value());
+    next.silent.holdMs = silentHold_->value();
+    next.silent.key = silentKey_->currentData().toInt();
 
     next.trigger.enabled = triggerEnabled_->isChecked();
     next.trigger.delayMs = triggerDelay_->value();
@@ -800,6 +866,20 @@ void Menu::syncFrom(const Config& config) {
     recoilRequireFire_->setChecked(config.recoil.requireFire);
     recoilStrength_->setValue(config.recoil.strength);
     recoilMax_->setValue(static_cast<int>(config.recoil.maxDegrees));
+
+    trackEnabled_->setChecked(config.track.enabled);
+    trackTeam_->setChecked(config.track.teamCheck);
+    trackFov_->setValue(static_cast<int>(config.track.fovPixels));
+    trackSmooth_->setValue(config.track.smooth);
+    const int trackKeyIndex = trackKey_->findData(config.track.key);
+    trackKey_->setCurrentIndex(trackKeyIndex >= 0 ? trackKeyIndex : 0);
+
+    silentEnabled_->setChecked(config.silent.enabled);
+    silentTeam_->setChecked(config.silent.teamCheck);
+    silentFov_->setValue(static_cast<int>(config.silent.fovPixels));
+    silentHold_->setValue(config.silent.holdMs);
+    const int silentKeyIndex = silentKey_->findData(config.silent.key);
+    silentKey_->setCurrentIndex(silentKeyIndex >= 0 ? silentKeyIndex : 0);
 
     triggerEnabled_->setChecked(config.trigger.enabled);
     triggerDelay_->setValue(config.trigger.delayMs);

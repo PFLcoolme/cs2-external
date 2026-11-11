@@ -32,6 +32,30 @@ struct RecoilConfig {
     bool requireFire{true};  // 只在开火键按住时补偿
 };
 
+struct TrackConfig {
+    bool enabled{false};
+    // 触发键：按住即把准星直接贴到最近敌人头部；0 = 不要求按键。
+    int key{1};  // 1 = 鼠标左键（开火）
+    // 搜索半径（屏幕像素）：0 = 全屏，不看准星附近，任意位置开火都会拉过去。
+    float fovPixels{0.f};
+    // 1 = 单帧贴合；>1 分摊到多帧，视觉上更像手动甩枪。
+    int smooth{1};
+    bool teamCheck{true};
+    float maxDistance{0.f};  // 0 = 不限
+};
+
+// 静默锁头：按住触发键时本进程自己「贴头 + 点击 + 归位」，
+// 玩家全程不需要把准星放到敌人身上，开火瞬间鼠标只在头部停留 holdMs。
+struct SilentConfig {
+    bool enabled{false};
+    int key{2};           // 触发键，2 = 鼠标中键
+    int holdMs{30};       // 贴头停留时长，需覆盖一个游戏 tick（64 tick ≈ 16 ms）
+    int cooldownMs{120};
+    float fovPixels{0.f}; // 0 = 全屏
+    bool teamCheck{true};
+    float maxDistance{0.f};
+};
+
 struct TriggerConfig {
     bool enabled{false};
     int key{0};  // 0 = 不使用按键（仅准星判定）
@@ -70,6 +94,8 @@ struct Config {
     Offsets offsets;
     AimbotConfig aim;
     RecoilConfig recoil;
+    TrackConfig track;
+    SilentConfig silent;
     TriggerConfig trigger;
     EspConfig esp;
 
