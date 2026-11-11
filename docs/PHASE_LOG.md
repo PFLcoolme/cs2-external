@@ -1224,3 +1224,38 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 2. `reloadOffsets` 只在本进程内替换，不会回写 `config.json`；下次启动仍以文件内容为准。
 3. 偏移替换后若新偏移无效，`update()` 会在 `resolveOffsets` 里把状态改成「未找到模块 / 偏移缺失」，但面板不会回滚到上一份可用偏移。
 4. `sameOffsets` 是字段白名单，将来新增核心偏移必须同步补进比较，否则会漏掉重扫。
+
+---
+
+# 阶段三十四：官网静态站
+
+## 1. 需求
+
+把项目介绍做成可公网访问的官网。
+
+## 2. 实现
+
+- 新增 `web/index.html` + `web/style.css`：纯静态单页，无构建步骤，不参与 CMake。
+- 内容基于 README：定位、八组功能卡片、五层架构、快速开始三步、Releases 入口、只读声明。
+- 响应式：`repeat(auto-fit, minmax(250px, 1fr))` 网格在 720 px 以下转单列。
+- README 顶部加官网链接与 Website 徽章，目录树补 `web/` 并说明「纯静态、直接上传」。
+
+## 3. 部署
+
+- 主机 `103.43.8.200`，站点域名 `cs2.xn--rhyr4ib67a.top`。
+- FTP 账户被 chroot 在站点根，`/` 即 web 根。
+- 旧站点（PHP 授权后台，40 个文件 / 0.15 MB）先全量下载备份到 `/home/cool/项目/cs2_ftp_backup_20261111/`，再清空。
+- 保留 `.well-known/`（证书自动续期）与 `.user.ini`（root 属主，FTP 无删除权限，对静态站无影响）。
+
+## 4. 验证结果
+
+- `GET http://cs2.xn--rhyr4ib67a.top/` → 200，返回 `<title>cs2-external · Linux 外部只读叠加层</title>`。
+- `GET /style.css` → 200，7739 bytes。
+- headless Chromium 1280×2600 截图确认导航、Hero、功能网格、架构层与快速开始布局正常。
+
+## 5. 遗留风险
+
+1. 排查时误按备份里 `config.local.php` 的 `base_url` 去测 `momo.xn--rhyr4ib67a.top`，实际那是另一个站点，浪费了一轮定位——以后以用户给出的域名为准。
+2. 旧 PHP 应用已从该站点删除，若仍有客户端调用其授权接口会失效；备份可随时恢复。
+3. FTP 凭据曾以明文出现在对话中，建议轮换。
+4. `web/` 未接入 CI，官网改动没有任何校验。

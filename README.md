@@ -6,11 +6,14 @@
 
 一份可审计、可维护的工程化实现：不注入、不附加调试器、不写游戏内存，全部数据来自 `/proc`，全部输入走 XTest。
 
+**官网**：[cs2.xn--rhyr4ib67a.top](http://cs2.xn--rhyr4ib67a.top/) · 源码在 [`web/`](web/)
+
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20X11-2ea44f?logo=linux&logoColor=white)](https://www.kernel.org/)
 [![C++](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)](https://isocpp.org/)
 [![Qt](https://img.shields.io/badge/Qt-6%20Widgets-41CD52?logo=qt&logoColor=white)](https://www.qt.io/)
 [![CMake](https://img.shields.io/badge/CMake-3.21%2B-064F8C?logo=cmake&logoColor=white)](https://cmake.org/)
 [![Release](https://img.shields.io/github/v/release/PFLcoolme/cs2-external?color=2ea44f&label=release)](https://github.com/PFLcoolme/cs2-external/releases/latest)
+[![Website](https://img.shields.io/badge/website-cs2.xn--rhyr4ib67a.top-1f2328)](http://cs2.xn--rhyr4ib67a.top/)
 [![X11](https://img.shields.io/badge/X11-XTest%20%7C%20XShape-6f42c1)](https://www.x.org/)
 [![Stars](https://img.shields.io/github/stars/PFLcoolme/cs2-external?style=flat&color=f5c542)](https://github.com/PFLcoolme/cs2-external/stargazers)
 [![Last Commit](https://img.shields.io/github/last-commit/PFLcoolme/cs2-external?color=blue)](https://github.com/PFLcoolme/cs2-external/commits/main)
@@ -462,9 +465,14 @@ cs2-external/
 │   ├── test_math.cpp           # 投影 / 朝向角 / 屏外方向
 │   ├── test_config.cpp         # 默认值与 JSON 往返
 │   └── test_util.h             # 极简断言工具
-└── tools/
-    └── cs2_linux_offsets.py    # Linux 偏移生成器（仅读 /proc）
+├── tools/
+│   └── cs2_linux_offsets.py    # Linux 偏移生成器（仅读 /proc）
+└── web/
+    ├── index.html              # 官网首页（静态，无构建步骤）
+    └── style.css               # 官网样式
 ```
+
+官网是纯静态页面，直接编辑 `web/` 下的两个文件，上传到站点根目录即可，不参与 CMake 构建。
 
 ---
 

@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cs2-external · Linux 外部只读叠加层</title>
+<meta name="description" content="CS2 外部只读辅助：通过 /proc 读取游戏状态，Qt6 叠加层绘制，不注入进程、不写内存。">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">
+      <span class="brand-mark"></span>
+      <span>cs2-external</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#arch">架构</a>
+      <a href="#start">快速开始</a>
+      <a class="ghost" href="https://github.com/PFLcoolme/cs2-external/releases/latest">下载</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="wrap">
+      <p class="eyebrow">Linux · X11 · C++20</p>
+      <h1>外部只读的游戏状态叠加层</h1>
+      <p class="lede">
+        通过 <code>/proc/&lt;pid&gt;/mem</code> + <code>pread64</code> 读取游戏状态，
+        用无边框透明 Qt6 窗口绘制信息层，输入由 XTest 合成。
+        <strong>不注入进程，不写入游戏内存。</strong>
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/PFLcoolme/cs2-external/releases/latest">下载最新版本</a>
+        <a class="btn" href="https://github.com/PFLcoolme/cs2-external">查看源码</a>
+      </div>
+      <p class="meta">Qt6 Widgets · CMake ≥ 3.21 · 单文件可执行 · 仅支持 Linux</p>
+    </div>
+  </section>
+
+  <section id="features" class="section">
+    <div class="wrap">
+      <h2>功能</h2>
+      <p class="section-lede">全部开关与参数都在控制面板里调，改动 400 ms 内自动落盘生效。</p>
+
+      <div class="grid">
+        <article class="card">
+          <h3>信息叠加</h3>
+          <ul>
+            <li>方框 · 血量条 · 血量/护甲数值 · 距离</li>
+            <li>骨骼连线（头 → 颈 → 胸 → 骨盆）</li>
+            <li>伤害浮字、残影轨迹、最低血量描边</li>
+            <li>遮挡虚线（基于可见性标记）</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>2D 雷达</h3>
+          <ul>
+            <li>可随视角旋转，也可固定北向</li>
+            <li>三等分距离圈 + 米数刻度</li>
+            <li>位置可选：底部居中 / 四角</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>屏外指示</h3>
+          <ul>
+            <li>视野外敌人在屏幕边缘显示方位箭头</li>
+            <li>箭头内侧标注距离米数</li>
+            <li>相机后方目标取反映射，不会指反</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>敌人列表</h3>
+          <ul>
+            <li>按距离排序，最多 10 行</li>
+            <li>显示距离与血量，颜色区分敌我</li>
+            <li>位置可选，适合远距离交战</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>高度差</h3>
+          <ul>
+            <li>对比目标与自身的 z 轴差值</li>
+            <li>超过 0.6 m 显示 ▲ / ▼ 与米数</li>
+            <li>多层地图不用再靠方框位置猜楼层</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>输入辅助</h3>
+          <ul>
+            <li>自瞄：FOV 过滤、平滑步数、灵敏度、目标策略、目标锁定</li>
+            <li>后坐力抵消：按实测角度反向补偿，可限制仅开火时生效</li>
+            <li>子弹追踪 / 静默锁头 / 自动扳机</li>
+            <li>触发键支持键盘与鼠标，面板点一下即可录制</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>控制面板</h3>
+          <ul>
+            <li>左侧分类列表，右侧参数就地展开</li>
+            <li>自绘 iOS 形制开关，140 ms 缓动</li>
+            <li>半透明玻璃底板，背景实时跟随</li>
+            <li><kbd>F8</kbd> 显隐面板 · <kbd>F9</kbd> 一键静默</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>运行时</h3>
+          <ul>
+            <li>采样与重绘解耦，互不阻塞</li>
+            <li>配置与偏移文件改动自动重载，不必重启</li>
+            <li>诊断日志超 2 MB 自动截断</li>
+            <li>偏移失效时状态栏直接列出缺失字段</li>
+          </ul>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="arch" class="section alt">
+    <div class="wrap">
+      <h2>架构</h2>
+      <p class="section-lede">五层单向依赖，渲染与输入都不直接碰内存读取。</p>
+
+      <div class="layers">
+        <div class="layer">
+          <code>ui</code>
+          <span>控制面板：配置编辑、热重载、日志</span>
+        </div>
+        <div class="layer">
+          <code>render</code>
+          <span>叠加层：ESP 绘制、雷达、屏外指示</span>
+        </div>
+        <div class="layer">
+          <code>features</code>
+          <span>输入合成：自瞄 / 追踪 / 静默 / 扳机 / 后坐力</span>
+        </div>
+        <div class="layer">
+          <code>game</code>
+          <span>实体分块遍历 → 纯数据快照</span>
+        </div>
+        <div class="layer">
+          <code>core</code>
+          <span>内存读取、投影数学、偏移与配置</span>
+        </div>
+      </div>
+
+      <p class="note">
+        共享状态只有一份 <code>std::atomic&lt;std::shared_ptr&lt;Config&gt;&gt;</code>，
+        读取方永远拿到不可变副本；采样结果以带锁快照交给渲染与输入线程。
+      </p>
+    </div>
+  </section>
+
+  <section id="start" class="section">
+    <div class="wrap">
+      <h2>快速开始</h2>
+
+      <div class="steps">
+        <div class="step">
+          <span class="step-no">1</span>
+          <div>
+            <h3>构建</h3>
+            <pre><code>sudo apt install qt6-base-dev libx11-dev libxext-dev libxtst-dev
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"</code></pre>
+          </div>
+        </div>
+
+        <div class="step">
+          <span class="step-no">2</span>
+          <div>
+            <h3>准备偏移</h3>
+            <pre><code>python3 tools/cs2_linux_offsets.py</code></pre>
+            <p class="hint">游戏运行后执行，生成 <code>config/offsets.json</code>；程序启动时也会自动刷新一次。</p>
+          </div>
+        </div>
+
+        <div class="step">
+          <span class="step-no">3</span>
+          <div>
+            <h3>运行</h3>
+            <pre><code>sudo ./build/cs2_lite</code></pre>
+            <p class="hint">
+              读取 <code>/proc/&lt;pid&gt;/mem</code> 需要 root，或先执行
+              <code>sudo sysctl -w kernel.yama.ptrace_scope=0</code>。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <h3>快捷键</h3>
+        <p><kbd>F8</kbd> 显隐控制面板 &nbsp;·&nbsp; <kbd>F9</kbd> 一键静默（隐藏叠加层并停止全部输入合成，再按恢复）</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="download" class="section alt">
+    <div class="wrap download">
+      <div>
+        <h2>下载</h2>
+        <p class="section-lede">
+          发布包包含 <code>cs2_lite</code> 可执行文件与 <code>default.json</code> 默认配置。
+          把配置放到可执行文件同目录并改名为 <code>config.json</code> 即可。
+        </p>
+      </div>
+      <a class="btn primary" href="https://github.com/PFLcoolme/cs2-external/releases/latest">前往 Releases</a>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <h2>说明</h2>
+      <ul class="plain">
+        <li>本项目<b>只读</b>游戏内存，不注入进程、不修改内存、不伪造网络包。</li>
+        <li>仅面向 Linux / X11，独占全屏无法叠加，请使用无边框窗口或全屏窗口模式。</li>
+        <li>根据游戏版本自行生成偏移；版本更新后偏移失效属正常现象。</li>
+        <li>仅供本地单机研究与技术学习，不提供任何形式的商业分发或售后。</li>
+      </ul>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>cs2-external</span>
+    <span class="dot">·</span>
+    <a href="https://github.com/PFLcoolme/cs2-external">GitHub</a>
+    <span class="dot">·</span>
+    <a href="https://github.com/PFLcoolme/cs2-external/releases">Releases</a>
+  </div>
+</footer>
+
+</body>
+</html>
