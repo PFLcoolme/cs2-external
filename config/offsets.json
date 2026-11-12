@@ -1,15 +1,15 @@
 {
-  "dwEntityList": 79275856,
-  "dwLocalPlayerPawn": 76829880,
-  "dwViewMatrix": 76860160,
+  "dwEntityList": 79036304,
+  "dwLocalPlayerPawn": 76590200,
+  "dwViewMatrix": 76620480,
   "m_iHealth": 1212,
-  "m_ArmorValue": 11616,
+  "m_ArmorValue": 11664,
   "m_iTeamNum": 1367,
   "m_lifeState": 1220,
   "m_pGameSceneNode": 1184,
   "m_vecAbsOrigin": 200,
-  "m_iIDEntIndex": 17796,
-  "m_bSpotted": 11552,
+  "m_iIDEntIndex": 17844,
+  "m_bSpotted": 11600,
   "m_aimPunchAngle": 80,
   "m_pAimPunchServices": 5408
 }

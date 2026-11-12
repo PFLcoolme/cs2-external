@@ -94,6 +94,48 @@ code, kbd, pre { font-family: var(--mono); }
   color: var(--ink);
 }
 
+/* ---------- 公告条 ---------- */
+
+.notice {
+  background: #fff8e6;
+  border-bottom: 1px solid rgba(180, 130, 20, 0.25);
+  color: #6b5310;
+}
+
+.notice-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-top: 11px;
+  padding-bottom: 11px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.notice-tag {
+  flex: none;
+  background: #b45309;
+  color: #fff;
+  border-radius: 5px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.notice p { margin: 0; flex: 1; }
+
+.notice strong { color: #78350f; }
+
+.notice a {
+  flex: none;
+  color: #92400e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.notice a:hover { color: #451a03; }
+
 /* ---------- Hero ---------- */
 
 .hero { padding: 92px 0 76px; }
@@ -451,6 +493,8 @@ footer {
   .section { padding: 52px 0; }
   .nav-links a:not(.ghost) { display: none; }
   .download { flex-direction: column; align-items: flex-start; }
+  .notice-inner { flex-wrap: wrap; gap: 8px; }
+  .notice p { min-width: 100%; }
   .layer { padding-left: 18px; }
   .layer code { min-width: 100%; }
 }

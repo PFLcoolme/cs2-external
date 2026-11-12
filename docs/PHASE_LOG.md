@@ -1359,6 +1359,7 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 
 - GitHub 置顶 Issue [#1](https://github.com/PFLcoolme/cs2-external/issues/1)（标签 `announcement`）：说明现有源码/文档/Releases/官网保留，后续功能与偏移适配不再公开发布，时间为预告，项目边界不变。
 - README 顶部新增 `> [!IMPORTANT]` 横幅，链接到该置顶 Issue。
+- 官网 `web/` 顶部同步一条淡黄底公告条（橙色「公告」标签 + 详情页链接），窄屏自动折行；重新 FTP 上传后线上首页 / CSS 均返回 200。
 
 ## 3. 边界
 
