@@ -1,3 +1,7 @@
+// Xlib 头会定义 Status / Bool / CursorShape 等宏，与 Qt6 头冲突
+// （Qt 明确要求自己的头先包含）。这里只声明需要的符号，不引入那套宏。
+extern "C" int XInitThreads(void);
+
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDir>
@@ -10,7 +14,9 @@
 #include <string>
 
 #include "core/Config.h"
+#include "core/LogPath.h"
 #include "features/Features.h"
+#include "features/MemoryEngine.h"
 #include "game/Game.h"
 #include "render/Overlay.h"
 #include "ui/Menu.h"
@@ -18,7 +24,7 @@
 namespace {
 
 void appendLog(const QString& line) {
-    if (FILE* file = std::fopen("/tmp/wv_lite.log", "a")) {
+    if (FILE* file = std::fopen(wv::logPath().c_str(), "a")) {
         std::fprintf(file, "[offsets] %s\n", line.toUtf8().constData());
         std::fclose(file);
     }
@@ -85,6 +91,10 @@ void refreshOffsets() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Features 与 MemoryEngine 各持一条 Xlib 连接。Xlib 默认非线程安全，
+    // 第二条 XOpenDisplay 会踩内部锁导致引擎线程看似启动、实则永不进循环
+    // （表现为所有内存功能静默失效）。必须在任何 Xlib 调用前切成线程安全模式。
+    XInitThreads();
     QApplication app(argc, argv);
     QApplication::setApplicationName("cs2_lite");
 
@@ -108,11 +118,14 @@ int main(int argc, char** argv) {
     wv::Menu menu(state, game, configPathUtf8);
     wv::Overlay overlay(game, state);
     wv::Features features(game, state);
+    wv::MemoryEngine engine(game, state);
 
     menu.show();
     features.start();
+    engine.start();
 
     const int code = QApplication::exec();
+    engine.stop();
     features.stop();
     return code;
 }

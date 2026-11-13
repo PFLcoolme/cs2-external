@@ -23,3 +23,6 @@ config.json.bak
 # Python 缓存（tools/cs2_linux_offsets.py）
 __pycache__/
 *.pyc
+
+# 本机规则目录（不随仓库分发）
+.codebuddy/

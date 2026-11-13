@@ -489,7 +489,10 @@ def main():
     wanted = {"C_BaseEntity", "CGameSceneNode", "CSkeletonInstance",
               "C_CSPlayerPawn", "C_CSPlayerPawnBase", "EntitySpottedState_t",
               "CCSPlayerController", "CBasePlayerController", "C_BasePlayerPawn",
-              "CCSPlayer_AimPunchServices"}
+              "CCSPlayer_AimPunchServices", "CPlayer_CameraServices",
+              "CPlayer_MovementServices", "CCSPlayer_MovementServices",
+              "CCSPlayer_CameraServices", "C_CSWeaponBase", "CPlayer_WeaponServices",
+              "CCSPlayer_WeaponServices", "CCSWeaponBaseVData"}
     fields, class_total = read_schema_classes(proc, schema, ss_mod, wanted)
 
     def need(cls, name):
@@ -535,7 +538,7 @@ def main():
             if off is not None:
                 print(f"[field] {cls}.{name} = {off} ({off:#x})")
                 return off
-        print(f"[field] {name} not present in schema (recoil disabled)")
+        print(f"[field] {name} not present in schema (dependent feature disabled)")
         return None
 
     # 后坐力角度需要两级跳：C_CSPlayerPawn.m_pAimPunchServices 是指针，
@@ -545,6 +548,64 @@ def main():
     m_pAimPunchServices = maybe_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"],
                                     "m_pAimPunchServices")
     m_aimPunchAngle = maybe_any(["CCSPlayer_AimPunchServices"], "m_predictableBaseAngle")
+
+    # 直接内存页五组功能的字段，全部按实机 schema 取值且全部可选：
+    # 版本改名时输出 0，对应功能在客户端静默跳过，不能拖垮整个生成器。
+    # 实机取证（ClientVersion 2000942 / pid 6995）：
+    #   C_CSPlayerPawn.m_angEyeAngles         = 0x44d0  射击结算角，不写 v_angle 就不动视角
+    #   C_CSPlayerPawn.m_flVelocityModifier   = 0x2d80  加速倍率
+    #   C_BaseEntity.m_vecVelocity            = 0x5a0   飞天垂直速度
+    #   C_BaseEntity.m_MoveType               = 0x69d   移动类型
+    #   CGameSceneNode.m_angRotation          = 0xb8    模型旋转（基址是 scene node！）
+    #   C_BasePlayerPawn.v_angle              = 0x1330  本地相机角，仅作恢复参考
+    m_angEyeAngles = maybe_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"], "m_angEyeAngles")
+    m_angStashedShootAngles = maybe_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"],
+                                        "m_angStashedShootAngles")
+    m_angEyeAnglesVelocity = maybe_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"],
+                                       "m_angEyeAnglesVelocity")
+    m_arrOldEyeAngles = maybe_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"],
+                                  "m_arrOldEyeAngles")
+    m_flVelocityModifier = maybe_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"],
+                                     "m_flVelocityModifier")
+    m_vecVelocity = maybe_any(["C_BaseEntity", "C_CSPlayerPawn"], "m_vecVelocity")
+    m_MoveType = maybe_any(["C_BaseEntity", "C_CSPlayerPawn"], "m_MoveType")
+    m_angRotation = maybe_any(["CGameSceneNode"], "m_angRotation")
+    m_angViewAngles = maybe_any(["C_BasePlayerPawn"], "v_angle")
+
+    # 阶段四十二：上面几个「表面」字段写进去能保持，但游戏消费的是这些深层字段。
+    # 实机取证（pid 8256）：只清零 punchBase 时 punchVel 仍为 -26，游戏每 tick
+    # 用角速度重建 punch；只写 m_angRotation 时 m_angAbsRotation 独立不变，模型不转。
+    m_angAbsRotation = maybe_any(["CGameSceneNode"], "m_angAbsRotation")
+    m_pCameraServices = maybe_any(["C_BasePlayerPawn"], "m_pCameraServices")
+    m_pMovementServices = maybe_any(["C_BasePlayerPawn"], "m_pMovementServices")
+    m_flMaxspeed = maybe_any(["CPlayer_MovementServices", "CCSPlayer_MovementServices"],
+                             "m_flMaxspeed")
+    m_vecCsViewPunchAngle = maybe_any(["CPlayer_CameraServices"], "m_vecCsViewPunchAngle")
+    m_aimPunchVel = maybe_any(["CCSPlayer_AimPunchServices"], "m_predictableBaseAngleVel")
+    m_unpredictableBaseAngle = maybe_any(["CCSPlayer_AimPunchServices"],
+                                         "m_unpredictableBaseAngle")
+    m_vecAbsVelocity = maybe_any(["C_BaseEntity"], "m_vecAbsVelocity")
+
+    # 散布 / 枪口抖动链路（实机 schema，pid 8444）
+    m_pWeaponServices = maybe_any(["C_BasePlayerPawn"], "m_pWeaponServices")
+    m_hActiveWeapon = maybe_any(["CPlayer_WeaponServices", "CCSPlayer_WeaponServices"],
+                                "m_hActiveWeapon")
+    m_iShotsFired = maybe_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"], "m_iShotsFired")
+    m_flFlinchStack = maybe_any(["C_CSPlayerPawn", "C_CSPlayerPawnBase"], "m_flFlinchStack")
+    m_flInterpolatedInaccuracy = maybe_any(
+        ["C_CSPlayerPawn", "C_CSPlayerPawnBase"], "m_flInterpolatedInaccuracy")
+    m_vClientScopeInaccuracy = maybe_any(["CCSPlayer_CameraServices"],
+                                         "m_vClientScopeInaccuracy")
+    m_fAccuracyPenalty = maybe_any(["C_CSWeaponBase"], "m_fAccuracyPenalty")
+    m_fAccuracySmoothedForZoom = maybe_any(["C_CSWeaponBase"], "m_fAccuracySmoothedForZoom")
+    m_flTurningInaccuracy = maybe_any(["C_CSWeaponBase"], "m_flTurningInaccuracy")
+    m_flTurningInaccuracyDelta = maybe_any(["C_CSWeaponBase"], "m_flTurningInaccuracyDelta")
+    m_iRecoilIndex = maybe_any(["C_CSWeaponBase"], "m_iRecoilIndex")
+    m_flRecoilIndex = maybe_any(["C_CSWeaponBase"], "m_flRecoilIndex")
+    m_flLastShakeTime = maybe_any(["C_CSWeaponBase"], "m_flLastShakeTime")
+    # 静态基础散布：偏移定位了，但 VData 指针不在 schema 中，暂不写入。
+    m_flSpreadVData = maybe_any(["CCSWeaponBaseVData"], "m_flSpread")
+
     m_bIsLocalPlayerController = need("CBasePlayerController", "m_bIsLocalPlayerController")
     m_hPlayerPawn = need("CCSPlayerController", "m_hPlayerPawn")
     m_hController = need("C_BasePlayerPawn", "m_hController")
@@ -691,6 +752,37 @@ def main():
         "m_bSpotted": m_bSpotted,
         "m_aimPunchAngle": m_aimPunchAngle or 0,
         "m_pAimPunchServices": m_pAimPunchServices or 0,
+        "m_angEyeAngles": m_angEyeAngles or 0,
+        "m_angStashedShootAngles": m_angStashedShootAngles or 0,
+        "m_angEyeAnglesVelocity": m_angEyeAnglesVelocity or 0,
+        "m_arrOldEyeAngles": m_arrOldEyeAngles or 0,
+        "m_angViewAngles": m_angViewAngles or 0,
+        "m_angRotation": m_angRotation or 0,
+        "m_vecVelocity": m_vecVelocity or 0,
+        "m_flVelocityModifier": m_flVelocityModifier or 0,
+        "m_MoveType": m_MoveType or 0,
+        "m_angAbsRotation": m_angAbsRotation or 0,
+        "m_pCameraServices": m_pCameraServices or 0,
+        "m_pMovementServices": m_pMovementServices or 0,
+        "m_flMaxspeed": m_flMaxspeed or 0,
+        "m_vecCsViewPunchAngle": m_vecCsViewPunchAngle or 0,
+        "m_aimPunchVel": m_aimPunchVel or 0,
+        "m_unpredictableBaseAngle": m_unpredictableBaseAngle or 0,
+        "m_vecAbsVelocity": m_vecAbsVelocity or 0,
+        "m_pWeaponServices": m_pWeaponServices or 0,
+        "m_hActiveWeapon": m_hActiveWeapon or 0,
+        "m_iShotsFired": m_iShotsFired or 0,
+        "m_flFlinchStack": m_flFlinchStack or 0,
+        "m_flInterpolatedInaccuracy": m_flInterpolatedInaccuracy or 0,
+        "m_vClientScopeInaccuracy": m_vClientScopeInaccuracy or 0,
+        "m_fAccuracyPenalty": m_fAccuracyPenalty or 0,
+        "m_fAccuracySmoothedForZoom": m_fAccuracySmoothedForZoom or 0,
+        "m_flTurningInaccuracy": m_flTurningInaccuracy or 0,
+        "m_flTurningInaccuracyDelta": m_flTurningInaccuracyDelta or 0,
+        "m_iRecoilIndex": m_iRecoilIndex or 0,
+        "m_flRecoilIndex": m_flRecoilIndex or 0,
+        "m_flLastShakeTime": m_flLastShakeTime or 0,
+        "m_flSpreadVData": m_flSpreadVData or 0,
     }
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)

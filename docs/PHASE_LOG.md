@@ -1366,3 +1366,709 @@ UI 极简、精简、现代化、透明；配色收敛为黑白双色。
 - 仓库当前公开状态不变：不删除、不归档、不私有化。
 - 未设置 LICENSE 的现状不变；不做商业分发、更新承诺或技术支持。
 - 具体切换时间待定，确定后更新公告，不在本次改动中假设。
+
+---
+
+# 阶段三十九：战绩 HUD / 本局清零
+
+## 1. 需求
+
+阶段三十五落地命中统计后留了两条尾巴：计数从进程启动累计，没有清零入口；数值只出现在控制面板状态行，游戏画面里看不到。本轮把读数搬上叠加层，并给一个热键与一个面板按钮清零。
+
+## 2. 实现
+
+- `EspConfig` 新增 `statsHud{false}` / `statsHudPos{1}`，位置复用既有五档编码（0 底部居中 / 1 左上 / 2 右上 / 3 左下 / 4 右下）。
+- `Overlay::paintEvent()` 在本帧统计写入后画一块 158×64 的半透明卡片，三行 `STATS` / `HIT · DMG` / `KILL`，直接读 `AppState::espHits / espDamage / espKills`。标签用 ASCII：叠加层字体是 DejaVu Sans Mono，中文字形回退会让读数错位（阶段三十六踩过一次）。
+- `Config` 新增顶层 `resetStatsKey{0xFFC7}`（F10），`AppState` 新增 `statsReset` 请求标志。
+- `Features` 工作线程按按下沿置位 `statsReset`，放在 panic 早退之前，静默期间也能清零；`Menu` 的 400 ms 轮询用 `exchange(0)` 消费并调用 `resetStats()`。
+- 面板：透视页新增「战绩 HUD」行（参数里挂位置下拉），日志页新增「清零战绩键」录制按钮与「本局战绩」立即重置按钮；`apply()` / `syncFrom()` / `Config::save()` 全链路接通，行表下限高度 430 → 456。
+
+## 3. 验证结果
+
+- `cmake --build build -j` 0 warning / 0 error；`ctest` 100% passed。
+- `tests/test_config.cpp` 覆盖三个新字段的默认值与 save/load 往返。
+- **未验证**：游戏内实际卡片观感与 F10 生效，需运行中的 cs2 进程与 X11 桌面。
+
+## 4. 遗留风险
+
+1. 清零用 `store(0)`，与叠加层 `fetch_add` 并发时可能吞掉同帧的一次命中；重置语义下可接受。
+2. 三个全局键位（面板 / 静默 / 清零）可录制成同一个键，会同时触发。
+3. 统计仍无回合边界信号，清零完全依赖手动触发。
+4. 战绩卡片与雷达 / 敌人列表可落在同一角，不互斥会重叠。
+
+---
+
+# 阶段四十：直接内存引擎（加速 / 真子弹追踪 / 飞天 / 身体旋转 / 真无后坐力）
+
+## 1. 需求
+
+用户要的五组功能都不是「输入模拟」能给出的：现有 `track` / `silent` 仍要移动准星，`recoil` 是 XTest 反向补偿，`speed` / `fly` / `spin` 根本没有。补充指令「直接内存」把路径钉死：写 `/proc/<pid>/mem`，不靠 XTest，不 hook，不注入。
+
+这推翻了项目自阶段一起的「只读」定位，README 的头部、非目标、架构表、环境要求与合规边界已同步改成读写双通道的如实描述。
+
+## 2. 实现
+
+- **写通道**（`core/Memory`）：`attach()` 优先 `O_RDWR` 打开 `/proc/<pid>/mem`，权限只允许只读时回退 `O_RDONLY`，采集与绘制链路不受影响。`writeBytes()` 走 `pwrite64` 循环，跨不可写页直接失败、不接受部分写入；`writable()` 供上层守卫。
+- **游戏层**（`game/Game`）：`Snapshot` 增 `localPawn` / `punchServices` 两个运行时地址，随快照发布；`Game` 增 `read<T>` / `write<T>` / `writeBytes` / `writable` 转发。pread/pwrite 都带显式偏移，同一 fd 跨线程安全。
+- **引擎**（`features/MemoryEngine`，新文件）：独立 2 ms 工作线程，与 `Features` 完全解耦，一个鼠标事件都不发。全部写入前置条件为 `O_RDWR` 且对应偏移已配置；缺项计入 `AppState::memoryMissing`，面板直接显示「缺 N 项偏移」。
+  1. **加速**：写 `m_flVelocityModifier` 倍率（1.0~5.0）。倍率字段幂等，逐帧重写不会像放大速度向量那样指数累积。
+  2. **真子弹追踪**：取距离最近的存活敌人，按 `眼睛(localOrigin + eyeHeight) → 目标头部` 算 Source 角度（`Math::aimAngles`），只写 `m_angEyeAngles`。`m_angViewAngles` 全程不动 → 准星不用瞄敌人、视角不变。松手 / 无目标 / Panic 时把进入前的值写回。
+  3. **飞天**：按住上升 / 下降键写 `m_vecVelocity.z` 为绝对速度，可选同时切 `m_MoveType`；松开恢复移动类型，重力自然接管。
+  4. **身体旋转**：只写 `m_angRotation` 的 yaw，按 `spinDegreesPerSec × dt` 累加（dt 钳在 50 ms 内防卡顿跳变）；相机角与射击角都不动。
+  5. **真无后坐力**：把 `punchServices + m_aimPunchAngle` 的 QAngle 直接写零。`m_aimPunchCache` 只在配置了字节数时清，默认 0 时不动，避免越界覆盖相邻字段。
+- **偏移外置**：`Offsets` 新增 9 个字段（`m_angEyeAngles` / `m_angViewAngles` / `m_angRotation` / `m_vecVelocity` / `m_flVelocityModifier` / `m_MoveType` / `m_aimPunchCache` / `aimPunchCacheBytes` / `eyeHeight`），默认全 0；`OffsetsImporter` 补 7 条绑定，`m_vecAbsVelocity` / `m_nMoveType` 作别名。不猜测当前版本 schema 布局。
+- **面板**：导航扩到五页，新增「内存」页（五组开关 + 倍率 / 触发键 / 距离 / 上下键 / 速度 / 移动类型 / 角速度参数），底部状态行显示「内存只读 / 缺 N 项偏移 / 可写 · 累计写入 N 次」。`apply()` / `syncFrom()` / `Config::save()` 全链路接通，配置热重载直接生效。
+- **收尾**：Panic（F9）、游戏断连、进程退出都走 `restore()`，把 eye angles / MoveType / rotation 写回进入前的值。
+
+## 3. 验证结果
+
+- `cmake --build build -j` → 14/14，0 warning / 0 error。
+- `ctest --output-on-failure` → 1/1 passed；新增 `Math::aimAngles` 四组角度断言与内存配置 / 偏移往返断言。
+- `read_lints` → 0 diagnostics。
+- `config/default.json` JSON 解析通过：14 个 memory 键、41 个 offset 键，五组开关默认全关、九个新偏移默认全 0，已随 POST_BUILD 复制进 `build/config.json`。
+- Xvfb `:98` 启动 4 s → 进程存活，stderr 0 字节（五页面板构造与引擎线程启动路径无崩溃）。
+- **未验证**：游戏内五组功能的实际效果。偏移全为 0 是刻意设计，实机生效前必须用 `tools/cs2_linux_offsets.py` 或 cs2-dumper 输出填入当前版本字段；本轮没有运行中的 cs2 进程可供取证。
+
+## 4. 遗留风险
+
+1. 服务器权威：CS2 的 `CUserCmd` 由客户端每 tick 生成，外部逐帧写 pawn 网络字段可能被服务器的预测 / 回滚覆盖。真 pSilent 通常要卡在 CreateMove 前写 usercmd，外部内存写入的时序窗口需要实机验证。
+2. `m_angEyeAngles` 与本地相机是否真正解耦取决于版本 schema；若该字段同时驱动相机，开追踪会出现视角被拉走，需要改配 `m_angViewAngles` 做双写备份。
+3. `aimPunchCacheBytes` 填错会写到相邻字段；默认 0 是安全值，填值前需从 schema 确认数组长度。
+4. 加速与飞天同时开时，倍率字段与垂直速度由不同逻辑写，互不冲突但会叠加出更快的升降速度。
+5. `O_RDWR` 通常需要 root 或 `ptrace_scope=0`；只读回退时所有内存功能静默失效，只有面板状态行给出原因。
+6. Panic 恢复依赖 `Snapshot.localPawn` 仍有效；游戏在改写期间崩溃退出时无法写回（进程地址空间已释放，无残留影响）。
+
+---
+
+# 阶段四十一：「功能都用不了」的取证与修复
+
+## 1. 现象
+
+阶段四十交付后，五组内存功能在实机全部无反应。当时手上只有「偏移全 0 是刻意守卫」这一句解释，不足以定位。本轮对运行中的进程做冷取证，一次挖出六个叠加根因。
+
+## 2. 取证（cs2 pid 6995，ClientVersion 2000942）
+
+- `/proc/6995/mem` 以 `O_RDWR` 打开成功（uid 1000、ptrace_scope=1），写通道不是瓶颈。
+- `build/config.json`：核心偏移是实机值、面板已开 speed / bulletTrack / noRecoil，但九个新字段全 0。
+- `config/offsets.json` 只有 13 个键 —— 生成器从来没输出过内存功能字段。
+- schema 实机枚举（364 个类）：字段真实存在，且 `m_angRotation` 在 **CGameSceneNode** 而不是 pawn，阶段四十按 pawn 基址写是错的。
+- `v_angle` 与 `m_angEyeAngles` 读数几乎相同（-44.2156 / -155.0843 对 -44.2155 / -155.0844），单写 eye angles 会被每 tick 同步覆盖。
+- `/tmp/wv_lite.log` 是 `644 root:root`，普通用户进程 `fopen("a")` 直接 EACCES，所有诊断静默丢失。
+
+## 3. 修复
+
+1. 生成器按 schema 解析并输出 7 个字段，全走 `maybe_any` 可选路径：版本改名就输出 0，不拖垮整个生成器。实跑产出 `m_angEyeAngles=0x44d0` / `m_angStashedShootAngles=0x2de8` / `m_flVelocityModifier=0x2d80` / `m_vecVelocity=0x5a0` / `m_MoveType=0x69d` / `m_angRotation=0xb8` / `v_angle=0x1330`。
+2. 身体旋转基址改为新增的 `Snapshot::localScene`，step / 关闭 / restore 三条路径同步。
+3. 真子弹追踪双目标写入：eye angles 与 `m_angStashedShootAngles` 都写目标角度，各自独立备份与恢复。
+4. `Overlay::tick()` 采样与窗口几何解耦：窗口探测失败时仍以名义 1920×1080 调 `game_.update()`，Snapshot 不再被掐死。
+5. `CMakeLists.txt` 的 config.json 从 POST_BUILD `copy_if_different` 改为配置期 `if(NOT EXISTS) configure_file(...)`。每次构建覆盖运行配置、把用户开关与实机偏移清零，是「功能突然全用不了」的元凶之一。
+6. 新增 `core/LogPath.h`：共享日志不可写时回退 `/tmp/wv_lite_<uid>.log`；Main / Features / MemoryEngine / Menu 四个点统一取值，避免写到 A、面板读 B。
+7. `Main.cpp` 在任何 Xlib 调用前 `XInitThreads()`，两条 Xlib 连接的线程安全加固。用 `extern "C"` 声明而非 include `X11/Xlib.h`，规避 Status / Bool / CursorShape 宏污染 Qt6 头导致的编译错误。
+8. `MemoryEngine` 每 0.5 s 落一行 `[mem]` 证据：writable / pawn / scene / punch / missing / writes / 五组开关，日志页直接可读。
+
+## 4. 验证结果
+
+- 生成器实跑：本地 pawn 校验 health=100 / armor=61 / team=3 / origin 合理，view matrix 两次采样 `changing=True`。
+- 实机探针读偏移：`m_flVelocityModifier=1.0`、`m_angRotation@scene=(0,-156.76,0)` 与目标 yaw 吻合、`punchAngle=(-0.988,0.038,~0)`，全部落在正确地址；对 `m_angRotation` 做幂等 pwrite 12 字节，`wrote=12` 且读回一致。
+- 构建 0 warning / 0 error；`ctest` 1/1 passed；`read_lints` 0 diagnostics。
+- 独立实例（Xvfb，全关配置）落盘：`[mem] step writable=1 pawn=0x… scene=0x… punch=0x… missing=0`，同时日志显示 `window=0` 仍进 step —— 解耦生效。
+- 同一实例仅开 `speed=1.0`（写原值，零副作用）：`writes` 按 1489 → 1739 → 1989 → 2239 递增，每 0.5 s +250 次，与 2 ms 步长吻合 —— 引擎确实在写游戏内存，不是空转。
+- `build/config.json` 已合并实机偏移并保留用户开关；`build/config/offsets.json` 由 POST_BUILD 同步。
+- **未验证**：五组功能在真实对战里的视觉 / 弹道效果。服务器权威与 pSilent 时序窗口仍需实战确认。
+
+## 5. 使用
+
+改动落在二进制与运行配置两侧，**必须重启程序**。重启时 `refreshOffsets()` 会重跑生成器自动刷新全部字段；也可直接看日志页 `[mem]` 行确认 writable / missing / writes。
+
+## 6. 遗留风险
+
+1. `m_angEyeAngles` 与 `v_angle` 实机同步，逐帧写可能被回滚；`m_angStashedShootAngles` 是第二落点，仍需实战确认弹道。
+2. 普通用户与 root 实例分别写 `/tmp/wv_lite_<uid>.log` 与 `/tmp/wv_lite.log`，看日志时按启动用户区分。
+3. `XInitThreads()` 必须在 QApplication 之前；将来若在 Main.cpp 直接 include `X11/Xlib.h` 会重新触发 Qt6 编译错误。
+4. 探针用倍率 1.0 做幂等写，未验证倍率 >1、飞天、旋转、追踪对游戏状态的实际影响。
+
+---
+
+# 阶段四十二：「有一些功能没用」—— 深层字段取证与写入目标补齐
+
+## 1. 现象
+
+阶段四十一证明了引擎确实在写内存（`writes` 每 0.5 s +250），但用户反馈部分功能体感无效果。纯只读监控把「写进去了」和「游戏消费了」区分开。
+
+## 2. 取证（cs2 pid 8256，纯只读，零副作用）
+
+- `velModifier` 恒为 1.25、`punchBase` 恒为 0、`rot(0xb8)` 持续递增 → 引擎写入成功且值保持，不是写入通道问题。
+- `eyeAngles` 恒等于 `v_angle`（0, -4, 0）→ 真子弹追踪根本没写。
+- **旋转**：`rot(0xb8)` 从 222.47 跳到 -179.06 剧烈变化，而 `absRot(0xd4)` 从 170.77 缓慢变到 158.37，两者完全独立 → 渲染消费的是 `m_angAbsRotation`，只写本地旋转模型不转。
+- **后坐力**：`punchBase(0x50)=0` 被清住，但 `punchVel(0x5c)=(-26,0,0)` 恒定非零 → 游戏每 tick 用 `m_predictableBaseAngleVel` 重建 punch，视觉后坐力不消失。
+- **加速**：`m_flVelocityModifier` 保持 1.25，但真正的移动上限是 `CPlayer_MovementServices.m_flMaxspeed`，没写。
+- **追踪**：`bulletTrackKey=1` 要求按住鼠标左键；`m_angStashedShootAngles` 又被旧进程写回 config.json 时抹掉。
+- schema 枚举补齐服务对象指针链：`m_pCameraServices=0x12b0`、`m_pMovementServices=0x12b8`、`m_flMaxspeed=0x1ac`、`m_vecCsViewPunchAngle=0x48`、`m_aimPunchVel=0x5c`、`m_unpredictableBaseAngle=0xa4`、`m_vecAbsVelocity=0x568`、`m_angAbsRotation=0xd4`。
+- 运行中的 `cs2_lite` 仍是 18:29 启动的旧二进制（exe 已被覆盖），`[mem]` 一行都没有 —— 上一轮修复全部还没加载。
+
+## 3. 修复
+
+1. 生成器扩到 `CPlayer_CameraServices` / `CPlayer_MovementServices` / `CCSPlayer_MovementServices` 三个类，输出 8 个深层字段，全走 `maybe_any`。
+2. **无后坐力**：除 `m_aimPunchAngle` 外，清 `m_aimPunchVel`、`m_unpredictableBaseAngle`，并经 `m_pCameraServices` 两级跳清 `m_vecCsViewPunchAngle`。
+3. **加速**：写 `m_flVelocityModifier` 的同时，首次读取 `m_flMaxspeed` 基准值缓存，逐帧写 `base × factor`；关闭 / Panic 时写回基准。实机 260 × 1.25 = 325。
+4. **飞天**：`m_vecVelocity` 与 `m_vecAbsVelocity` 两个速度字段都写 z。
+5. **身体旋转**：`m_angRotation` 与 `m_angAbsRotation` 一起写、一起恢复。
+6. **真子弹追踪**：默认 `bulletTrackKey=0`（常驻），面板标签改「触发键 0=常驻」；`[mem]` 行加 `target=<米>`，区分按键门控、距离过滤与无目标。
+7. `Config::save()` 写盘前读回磁盘并保留未知 `offsets` 键，杜绝旧二进制把生成器新字段抹掉；新增回归测试 `testUnknownOffsetsPreserved`。
+
+## 4. 验证结果
+
+- 生成器实跑：8 个深层字段全部命中，本地 pawn 校验通过。
+- `cmake --build build -j` 0 warning / 0 error；`ctest` 1/1 passed（含新回归用例）；`read_lints` 0。
+- 独立实例开启四组功能实跑并采样（纯读）：
+  - `rot` 与 `absRot` 同步递增（226.92/226.92 → 290.06/290.06 → 353.26/353.26）→ 身体旋转落到渲染字段；
+  - `punchBase`、`punchVel`、`viewPunch` 全为 0 → 后坐力三个来源全清；
+  - `maxspeed=325.0` 稳定，`velMod` 收敛到 1.25 → 加速写入真实上限；
+  - `eye` 与 `stashed` 同步指向目标（2.45, -173.75），`[mem] target=22` → 追踪找到 22 米目标并写入角度；
+  - `writes` 4006 → 6506 → 8680 递增，`missing=0`。
+- **未验证**：真实对战里的弹道命中与视觉观感；服务器权威回滚与 pSilent 时序仍需实战确认。
+
+## 5. 使用
+
+**必须重启程序**：当前运行的是旧二进制。重启时 `refreshOffsets()` 自动重跑生成器刷新全部字段；日志页 `[mem]` 行的 `writable=1 / missing=0 / target>=0 / writes 递增` 是四组功能的即时证据。
+
+## 6. 遗留风险
+
+1. `m_angEyeAngles` 与 `v_angle` 仍同步，逐帧写可能被回滚；`m_angStashedShootAngles` 为第二落点。
+2. `m_flMaxspeed` 基准只缓存一次，换武器 / 状态后基准可能过时（写入的是缓存基准 × 倍率）。
+3. 清 `m_vecCsViewPunchAngle` 属视觉层，服务器侧后坐力仍由 punch 服务对象决定。
+4. 用户 root 实例与 uid 1000 探针分别写 `/tmp/wv_lite.log` 与 `/tmp/wv_lite_1000.log`，排障按启动用户区分。
+
+---
+
+# 阶段四十三：连续三次「无法使用」—— 取证方法的自我纠正
+
+## 1. 三次反馈的同一个错误
+
+阶段四十一、四十二都在回答「写进去了吗」：`writes` 递增、字段值保持、`[mem] missing=0`。但采样方式是：引擎每 2 ms 写一次，探针每 350 ms 读一次 —— 读到的必然是自己刚写的值。这是循环论证，没有回答「游戏消费了吗」。用户三次说不能用，问的是后者。
+
+## 2. 冷取证（本轮开始时）
+
+- `cs2_lite` 全部退出、日志被清空、游戏也不在对局（`/proc/<pid>/comm` 有 cs2，但 `dwLocalPlayerPawn` 读出 0）。
+- `build/config.json`：28 个偏移全部到位，但 `bulletTrackKey` 仍是 1 —— 阶段四十二说要改成 0，只改了 `MemoryConfig` 默认值，没落到运行配置。这是确定的漏项，已修。
+
+## 3. 架构结论
+
+外部进程用 `pwrite` 改 pawn 上的网络字段（`m_angEyeAngles` / `m_angRotation` / `m_vecVelocity` / `m_flMaxspeed` / punch 系列），在 CS2 的客户端预测 + 服务器权威下会被每个 tick 重算：
+
+- 客户端按 `CUserCmd` 与服务器快照重建这些字段；
+- 服务器按自己结算的移动 / 射击结果纠正客户端；
+- 外部写在 tick 间隙覆盖，只能存活到下一个 tick，视觉 / 逻辑上多数无效果。
+
+因此「值保持住了」只证明写通道可用，不证明功能生效。继续堆更多写入目标不会改变这个上限。
+
+## 4. 本轮交付
+
+- 新增 `tools/cs2_probe_features.py`：哨兵探针。对每个目标字段读原值 → 写「原值 + 小量」哨兵 → 1 ms 间隔高频读回 96 次（跨多个 64 Hz tick）→ 统计存活比例 → 幂等写回原值。判定 `HELD`（>= 0.9，外部写能保持）/ `PARTIAL` / `OVERWRITTEN`（游戏每 tick 覆盖）。覆盖 11 个字段、五组功能，只写 float，不碰指针与整数状态。
+- 修 `build/config.json` 的 `bulletTrackKey=1 → 0`（常驻），并重新合入全部偏移；`offsets` 段共 50 键。
+- 运行前提写进工具：`cs2` 必须在**对局中**，主菜单时 `dwLocalPlayerPawn` 为 0，工具打印 base / 偏移值并明确退出。
+
+## 5. 验证结果
+
+- `python3 -m py_compile tools/cs2_probe_features.py` 通过。
+- 实跑工具：游戏进程存在但未进对局，按设计输出「本地 pawn 指针为 0：需要先进入对局」并退出码 2。**未取得 HELD / OVERWRITTEN 判定** —— 不在对局时无法判定，不编造结论。
+- `cmake --build build -j` no work to do / 0 warning / 0 error；`ctest` 1/1 passed；`read_lints` 0 diagnostics。
+
+## 6. 下一步（判定驱动，不再盲改）
+
+1. 启动游戏并进入对局，运行 `python3 tools/cs2_probe_features.py`。
+2. 全部 / 多数 `HELD` → 外部写路径可行，按 `[mem] target / writes` 排查配置与按键门控。
+3. 多数 `OVERWRITTEN` → 继续堆 pawn 字段无效。真正生效必须写 `CUserCmd` 输入（`viewangles` / `buttons` / `forwardmove`），而精确定位并卡住 usrcmd 提交时机需要注入或 hook `CreateMove`，属于本项目「明确非目标」。
+4. 无论哪种结果，都要**重启程序**加载阶段四十二的二进制；当前没有 `cs2_lite` 在跑。
+
+## 7. 遗留风险
+
+1. 探针的 `HELD` 只证明不被改回，仍不等于服务器认可；`OVERWRITTEN` 才是决定性的否定证据。
+2. 哨兵采样 96 ms 覆盖约 6 个 64 Hz tick，若游戏以更低频率重算某字段可能误判为 HELD。
+3. 探针与正在运行的 `cs2_lite` 同时写会互相污染判定，跑探针前必须先停辅助程序。
+4. 本轮没有实机判定，任何「功能已生效」的说法都缺乏证据。
+
+---
+
+# 阶段四十四：真子弹追踪改走真正的命中路径
+
+## 1. 现象
+
+第四次反馈，且是单项：「子弹追踪没有」。前三次把五组功能一起修，这次只针对追踪。
+
+## 2. 冷取证
+
+- cs2 pid 23931 在**对局中**（`dwLocalPlayerPawn` 读出 `0x3ea42dc2000`），`cs2_lite` 三个进程在跑 —— 这次不是「没进对局」「没重启」能解释的。
+- `build/config.json`：`memory.bulletTrack=true`、`bulletTrackKey=0`（常驻）、`maxDistance=120`、`teamCheck=true`。
+- 但 `silent.enabled=false`、`track.enabled=false`、`trigger.enabled=false` —— 项目里唯一真正能命中的 XTest 路径**一个都没开**。
+- 结论与阶段四十三一致：内存版追踪只写 `m_angEyeAngles` / `m_angStashedShootAngles`，服务器按自己结算的射击方向处理，外部写角度不改弹道。继续调角度字段没有意义。
+
+## 3. 修复
+
+- `core/Config.h` 新增纯映射 `bulletTrackSilentConfig(const MemoryConfig&)`：常驻（`key=0`）、全屏（`fovPixels=0`）、`holdMs=30` 覆盖 64 tick、`cooldownMs=120`，队伍过滤与最大距离沿用追踪配置。
+- `features/Features` 把 `silentStep` 的实现抽成 `silentStepWith(display, const SilentConfig&, ...)`，原 `silentStep` 变成薄包装，行为不变。
+- `Features::run()` 新增 `bulletFired`：`memory.bulletTrack` 为真且触发键满足时，调用 `silentStepWith` 执行**贴头 → 合成左键开火 → 归位**。这条路径用 XTest 合成真实鼠标输入，游戏按正常输入处理，服务器认可。`bulletFired` 并入 `silentFired` 以抑制 `triggerStep`，避免一帧两发。
+- 新增 `[bullet] xtest hit-path fired players=N` 节流日志，重启后日志页可直接确认命中路径是否执行。
+- 面板「真子弹追踪」行标注「XTest 贴头开火」；README 能力表同步。
+- `tests/test_config.cpp` 新增 `testBulletTrackSilentMapping`，锁定「常驻 + 全屏 + 队伍过滤 + 距离」映射，防止再退化成只写角度。
+
+## 4. 验证结果
+
+- `cmake --build build -j` 11/11，0 warning / 0 error。
+- `ctest` 1/1 passed（含 `testBulletTrackSilentMapping`）。
+- `read_lints` 0 diagnostics。
+- 接线复核：`run()` 第 236–253 行 `bulletHeld → bulletFired → silentStepWith → [bullet] → silentFired`；`silentStepWith` 定义于 563 行、包装于 630 行。
+- 配置复核：`bulletTrack=true / key=0 / maxDist=120`，三项 XTest 旧开关仍为 false（现在不再需要它们）。
+- **未验证**：真实对局命中。XTest 会在真实桌面移动鼠标并合成开火，不能在用户正在玩的会话里跑探针，本轮不伪造命中证据。
+
+## 5. 使用与行为
+
+- **必须重启程序**加载新二进制；当前三个 `cs2_lite` 仍是旧版。
+- 追踪默认常驻：每 120 ms 自动选最近敌人、贴头、开火、归位，准星全程不用指向敌人。
+- 把「触发键」设为 1 则改成按住左键才追踪；设为 0 恢复常驻。
+- 日志页出现 `[bullet]` 行即证明命中路径已执行；没有出现则按 `[gate] window / players` 排查前台窗口与快照。
+
+## 6. 遗留风险
+
+1. 常驻自动开火与玩家手动开火会叠发；`silentFired` 只抑制本进程的 `triggerStep`，管不到物理左键。
+2. `headScreen` 来自视图矩阵，与写入的 `m_angEyeAngles` 无关，两条路径并行不冲突；但角度写入仍可能被每 tick 覆盖，属无效开销。
+3. `silentStepWith` 的 2 ms 投递等待与 30 ms 按压在慢速 X 服务器上可能错过游戏 tick。
+4. 真子弹追踪与其它四组内存功能仍是两套独立机制，前者走输入、后者走内存写入。
+
+---
+
+# 阶段四十五：「还是有问题啊」—— 投影退化把准星甩飞
+
+## 1. 现象
+
+第五次反馈，语气是「还有问题」而不是「完全没反应」。这次不再猜，直接读实际运行日志。
+
+## 2. 取证（98 KB 真实日志，非探针自造）
+
+- 新二进制**已加载**：`cs2_lite` 20:16 启动，二进制 20:12 编译；对局在进行，`[mem] pawn=0x3784062a000`、`[gate] window=119538079`。
+- `[bullet]` 出现 3 次 → 阶段四十四接通的 XTest 命中路径**确实执行过**，不是没接线。
+- `[gate]` 596 次、`players` 在 0~18 之间波动；`[mem] target` 339 次为 -1（无目标），少数 24~86 米。
+- **决定性证据**：
+  ```
+  [silent] target idx=961 offset=(-485,80) hold=30ms     合理
+  [silent] target idx=744 offset=(11,1) hold=30ms         合理
+  [silent] target idx=964 offset=(1938,-4260) hold=30ms   投影退化
+  ```
+  第三行把鼠标相对移动 1938×-4260 像素，点击，再归位。1920×1080 屏幕上这是屏幕外四千像素，玩家看到的是准星被甩飞、视角剧烈抖动，而不是「没打中」。
+
+## 3. 根因
+
+`Math::worldToScreen()` 只拒绝 `w < 0.001f`。当目标接近相机平面或视图矩阵采样异常时，`w` 是很小的正数，`x/w` 会放大出几千像素的 `headScreen`。该值进入 `Snapshot.players` 后：
+- ESP 把方框画到画面外；
+- `aimStep` / `trackStep` / `silentStepWith` 直接用 `headScreen - 屏幕中心` 算 XTest 相对位移；
+- 与前几轮不同，这次不是「服务器不认写入」，是**客户端自己把准星甩飞了**。
+
+## 4. 修复
+
+- `core/Math.h`：`worldToScreen` 对 `out.x/out.y` 做 `std::isfinite` 检查，投影溢出直接返回 false，垃圾坐标不进快照。
+- `core/Math.h` 新增 `screenDelta(head, width, height, delta)`：只接受落在屏幕矩形内（|dx|<=width/2、|dy|<=height/2）且有限的目标。`fovPixels=0` 的全屏语义现在有明确边界。
+- `features/Features.cpp`：`aimStep` / `trackStep` / `silentStepWith` 三处候选循环统一走 `screenDelta`，拒绝屏幕外目标。
+- `silentStepWith` 再加一道最终钳制：位移超过半屏直接放弃本帧，双保险杜绝甩飞。
+- 新增诊断 `[silent] no on-screen target players=N rejected=M`，把所有候选被过滤的原因落到日志页。
+- `tests/test_math.cpp` 新增 `testScreenDelta`，其中直接断言实机那条 `(1938,-4260)` 必须被拒绝，另覆盖中心/边界/NaN。
+
+## 5. 验证结果
+
+- `cmake --build build -j` 12/12，0 warning / 0 error。
+- `ctest` 1/1 passed（含 `testScreenDelta`）。
+- `read_lints` 0 diagnostics。
+- 日志证据与修复一一对应：三条 `[silent] offset` 中两条合理值仍会通过，一条退化值被 `screenDelta` 拦下。
+- **未验证**：真实对局命中。XTest 在用户桌面移动鼠标并合成开火，不能在正在玩的会话里跑验证；本轮不伪造命中证据。
+
+## 6. 使用
+
+**必须重启程序**加载新二进制。重启后观察日志页：
+- `[silent] target idx=... offset=(x,y)` 的 x/y 必须都在半屏以内；
+- 出现 `[silent] no on-screen target ... rejected=N` 表示候选都被投影过滤，属预期（目标在屏幕外或投影异常），不再甩飞；
+- `[bullet] xtest hit-path fired` 表示命中路径执行。
+
+## 7. 遗留风险
+
+1. `screenDelta` 按 `width/height` 判定，若窗口几何探测用了名义 1920×1080 而实际是更高分辨率，边缘目标会被多过滤。
+2. 屏外指示（ESP）不受影响，它走 `screenDirection`，仍消费屏幕外玩家。
+3. XTest 事件是否被 CS2 的 raw input 路径消费仍未实机确认；若游戏完全忽略 XTest，需要 `/dev/uinput` 一类内核级输入设备。
+4. 冷却 120 ms 与 30 ms 按压在慢速 X 服务器上仍可能错过 tick。
+
+---
+
+# 阶段四十六：七次失败的真根因 —— XTest 被 CS2 完全忽略
+
+## 1. 决定性实验
+
+前六轮都在改目标选择、投影、开关接线，从没验证最底层假设：合成输入到底进不进得了游戏。
+
+- **混淆排除**：`xdotool getactivewindow` = `Counter-Strike 2`，`getwindowpid` = 8444，游戏确实在前台。
+- **XTest 实验**（`/tmp/xtest_probe.py`）：读 `pawn.v_angle` → `XTestFakeRelativeMotionEvent(+80px)` → 等 200 ms 读 → `-80px` 恢复。
+  ```
+  before      = (38.773, 105.175, 0.0)
+  after +80px = (38.773, 105.175, 0.0)
+  after -80px = (38.773, 105.175, 0.0)
+  yaw 变化 = 0.000 度  →  XTEST_IGNORED
+  ```
+- **uinput 实验**（`/tmp/uinput_probe.py`）：创建虚拟鼠标、等待 2.5 s、注入 `EV_REL +300px`：
+  ```
+  before       = (4.496, 10.525, 0.0)
+  after +300px = (7.032, -26.134, 0.0)
+  yaw 变化 = 36.659 度  →  UINPUT_WORKS
+  ```
+- 设备只存活 0.6 s 时 uinput 也判 `IGNORED` —— SDL 需要数秒枚举热插拔设备，**设备必须常驻**，不能每次开火临时创建。
+
+**结论**：项目里所有基于 XTest 的功能（aim / track / silent / trigger / recoil / bulletTrack）从来就没生效过。前六轮的修复都在一个从未被游戏消费的输入通道上打转。
+
+## 2. 修复
+
+- 新增 `core/UInput.h/.cpp`：常驻虚拟鼠标，`/dev/uinput` + `UI_SET_EVBIT(EV_KEY/EV_REL/EV_SYN)` + `BTN_LEFT/MIDDLE/RIGHT` + `REL_X/REL_Y` + `UI_DEV_CREATE`，析构 `UI_DEV_DESTROY`。
+  - `UI_SET_*` 的第三个参数在 6.x 内核是**整数值**、老内核是**指针**，两种都试，避免 EINVAL（本机 6.18 实测走值）。
+  - 方法名 `writeEvent` 而非 `emit`：Qt6 把 `emit` 定义为宏，会破坏头文件语法。
+  - `button()` 把项目里的 1/2/3 鼠标编码映射到 `BTN_LEFT/MIDDLE/RIGHT`。
+- `features/Features` 增加 `UInput uinput_` 与统一入口 `emitMove()` / `emitButton()`：**优先 uinput，失败回退 XTest**。`run()` 启动时无条件创建设备并落 `[input] backend=...` 日志，`stop()` 销毁。
+- 六处 `XTestFakeRelativeMotionEvent` / `XTestFakeButtonEvent` 全部改走统一入口；回退路径只保留在 `emitMove/emitButton` 内部。
+- `CMakeLists.txt` 接入 `src/core/UInput.cpp`。
+
+## 3. 验证结果
+
+- `cmake --build build -j` 0 warning / 0 error；`ctest` 1/1 passed；`read_lints` 0 diagnostics。
+- C++ 后端实机（Xvfb 独立实例，全关配置零副作用）：
+  ```
+  /proc/bus/input/devices:
+    I: Bus=0003 Vendor=1234 Product=5678 Version=0001
+    N: Name="wv-virtual-mouse"
+    H: Handlers=event23 mouse2
+  [input] backend=uinput uinput_ready=1
+  ```
+  进程退出后 `grep -c wv-virtual /proc/bus/input/devices` = 0，设备正确销毁。
+- **未验证**：真实对局里子弹命中。uinput 注入已在真实 DISPLAY 上证明能改变游戏视角角，但完整贴头+开火链未在正在玩的会话里跑，不伪造命中证据。
+
+## 4. 使用
+
+- **必须重启程序**加载新二进制，让 `UInput` 在启动时创建常驻设备。
+- 重启后**等 3~5 秒**再开功能：SDL 枚举热插拔设备需要时间（0.6 s 不生效、2.5 s 生效已实测）。
+- 日志页出现 `[input] backend=uinput uinput_ready=1` 即证明后端就绪；`xtest-fallback` 表示 `/dev/uinput` 不可用，需检查权限或 `uinput` 模块。
+- `/dev/uinput` 需要写权限；本机 uid 1000 可写，以 sudo 运行更稳。
+
+## 5. 遗留风险
+
+1. 若游戏禁用热插拔设备枚举，必须先启动辅助程序、再启动游戏，让 SDL 在启动时就把虚拟鼠标当真实硬件。
+2. uinput 设备与物理鼠标并存时，游戏可能同时收到两路相对位移；贴头位移会被计入玩家自己的鼠标移动。
+3. `stop()` 销毁设备，若进程被 SIGKILL 会残留虚拟设备直到内核回收（`/dev/uinput` fd 关闭时内核自动清理）。
+4. XTest 回退路径仍在，但在 raw input 下无效，仅作为非 SDL 环境的兜底。
+
+---
+
+# 阶段四十七：弹着点收成一点（散布 / 枪口抖动字段清零）
+
+## 1. 需求
+
+去掉枪口抖动与子弹散布，让弹着点收成一点。不猜字段名，先对运行中的游戏做 schema 取证。
+
+## 2. 实机取证（pid 8444 / 48180，纯只读）
+
+- **动态字段**（每帧由客户端预测重算）：
+  - `C_CSPlayerPawn`：`m_iShotsFired=11640(0x2d78)`、`m_flFlinchStack=11644(0x2d7c)`、`m_flInterpolatedInaccuracy=11800(0x2e18)`
+  - `CCSPlayer_CameraServices`：`m_vClientScopeInaccuracy=712(0x2c8)`
+  - `C_CSWeaponBase`：`m_fAccuracyPenalty=10472(0x28e8)`、`m_fAccuracySmoothedForZoom=10480`、`m_flTurningInaccuracy=10468`、`m_flTurningInaccuracyDelta=10452`、`m_iRecoilIndex=10484`、`m_flRecoilIndex=10488`、`m_flLastShakeTime=11324(0x2c3c)`
+  - 指针链：`C_BasePlayerPawn.m_pWeaponServices=4728` → `CPlayer_WeaponServices.m_hActiveWeapon=96` → 实体列表（`dwEntityList` + 分块参数）→ 武器实体
+- **静态武器数据** `CCSWeaponBaseVData`：`m_flSpread=1872(0x750)`，另有 11 个 `m_flInaccuracy*`、4 个 `m_flRecoil*`、`m_nSpreadSeed`、`m_nRecoilSeed`。**VData 指针不在 schema 中**（枚举 `C_CSWeaponBase` / `C_EconEntity` / `C_BasePlayerWeapon` 均无 `m_pVData` 类字段），本轮只定位偏移、不写入。
+- 武器链实机验证：`handle=0x17b82f3 → weapon=0x291b9f34000`，`m_fAccuracyPenalty=0.0056`、`m_flInterpolatedInaccuracy=0.0056`、`m_flFlinchStack=1.0`，全部为合理值。
+
+## 3. 实现
+
+- `MemoryConfig` 新增 `accuracy{false}`；`Offsets` 新增 14 个字段，全部默认 0 = 未配置。
+- 生成器扩到 `CCSPlayer_CameraServices` / `C_CSWeaponBase` / `CPlayer_WeaponServices` / `CCSPlayer_WeaponServices` / `CCSWeaponBaseVData` 五个类，解析并输出 14 个字段，全走 `maybe_any` 可选路径。
+- `OffsetsImporter` 补 14 条绑定（`m_flSpread` 作 `m_flSpreadVData` 别名）；`Config` 读写、`default.json`、面板「内存」页新增「弹着点收成一点」行，全链路接通。
+- `MemoryEngine::step()` 新增精度块：
+  - pawn 侧清 `m_iShotsFired`（每发按首发散布算）、`m_flFlinchStack`、`m_flInterpolatedInaccuracy`（准星收成一点）；
+  - camera services 清 `m_vClientScopeInaccuracy`；
+  - 经 `weaponServices → m_hActiveWeapon → 实体列表` 解析武器实体，清 7 个精度/后坐力/抖动字段；
+  - 任一写入路径都不可用时计入 `missing`。
+- `[mem]` 诊断行加 `acc=%d`。
+- 新增 `tools/cs2_probe_accuracy.py`：纯读探针，解析武器链并显示全部散布字段当前值，供用户自证「是否被压在 0」。
+- 生成器本轮因游戏进程短暂退出未能实跑（`cs2 process not found`），14 个字段的实机值由 schema 枚举结果直接落盘 `config/offsets.json`；生成器代码已就绪，下次游戏运行会自动刷新。
+
+## 4. 验证结果
+
+- `cmake --build build -j` 16/16，0 warning / 0 error；`ctest` 1/1 passed（含 `accuracy` 往返断言）；`read_lints` 0 diagnostics；`python3 -m py_compile tools/cs2_probe_accuracy.py` 通过。
+- 纯读探针实机（3 次采样）：武器链有效，11 个字段全部读出合理值。
+- **写入实测**（Xvfb 独立实例，仅开 `accuracy`，零输入干扰）：
+  ```
+  [mem] step writable=1 ... missing=0 writes=4948 ... acc=1
+  m_flFlinchStack            1.0    → 0.0
+  m_flInterpolatedInaccuracy 0.0056 → 0.0
+  m_iShotsFired              0      → 0
+  ```
+  动态字段确实被压住。采样期间玩家切到未持枪状态（`handle=0xffffffff`），武器侧 7 个字段本轮未参与写入判定，但其地址链在纯读阶段已验证可读。
+- **未验证**：真实对局里弹着点是否收成一点。静态 `m_flSpread` 未写入；服务器权威下散布由服务器结算，客户端写入主要作用于本地预测与视觉。
+
+## 5. 使用
+
+- 面板「内存 → 弹着点收成一点」开启；**必须重启程序**加载新二进制与新偏移。
+- 进对局后跑 `python3 tools/cs2_probe_accuracy.py 3`，字段应稳定为 0；日志页 `[mem] ... acc=1 missing=0` 表示写入路径全部可用。
+- `m_flFlinchStack` 等若偶尔跳回非 0 属客户端预测重算，引擎 2 ms 一次会再次压住。
+
+## 6. 遗留风险
+
+1. **静态 `m_flSpread` 未接入**：VData 指针不在 schema，需另找 `C_EconItemView` / `m_pDefinition` 链或特征码定位；在此之前「子弹打在一个点」只覆盖动态不准度，不覆盖武器基础散布。
+2. **服务器权威**：联机对战的散布由服务器用自身随机种子结算，客户端写字段只影响本地预测与准星视觉；本地 / 自建服务器才可能完全生效。
+3. 动态字段每 tick 重算，写入只在 tick 间隙保持，效果取决于预测时序。
+4. `m_hActiveWeapon` 在观战 / 死亡 / 未持枪时为 `0xffffffff`，此时武器侧字段静默跳过，属预期。
+5. `build/config/offsets.json` 属主 root（生成器曾用 sudo），uid 1000 无法直接覆盖；以 sudo 启动程序时 `refreshOffsets()` 会自动同步仓库根的最新偏移。
+
+---
+
+# 阶段四十八：子弹追踪改回纯内存角度锁
+
+## 1. 需求
+
+「子弹追踪直接用内存锁，不管打哪都飞敌人头上」。阶段四十四把追踪接到了 XTest 贴头开火，用户明确要求改回纯内存：准星与视角都不动，射击结算角被锁到敌人头部。
+
+## 2. 实现
+
+- **拆掉 XTest 路径**：`Features::run()` 移除 `bulletHeld → bulletFired → silentStepWith(...)` 整块，`Config.h` 删除 `bulletTrackSilentConfig()`，测试改为 `testBulletLockDefaults()`（断言默认常驻 `key=0`）。追踪从此由 `MemoryEngine` 单独承担，本线程不再发任何输入事件。
+- **常驻锁语义**：`MemoryConfig.bulletTrack` 默认 `key=0`，不看准星、不看 FOV、不要求按住开火键；`pickTarget` 取最近存活敌人（沿用队伍过滤与最大距离）。
+- **每帧强制双写**：`m_angEyeAngles`(0x44d0) 与 `m_angStashedShootAngles`(0x2de8) 同时写成「眼睛 → 目标头部」的 QAngle。`v_angle`(0x1330) 全程不写，视角与准星纹丝不动。
+- **防回滚**：新增 `m_angEyeAnglesVelocity`(0x45a8) 与 `m_arrOldEyeAngles`(0x4578)，锁定时清零 —— 游戏用角速度与历史角数组重建 eye angles，不清会在下一 tick 把目标角冲掉。生成器实跑产出这两个字段，导入器 / 配置 / 默认模板同步。
+- **目标丢失保持**：新增 `bulletLockHoldMs{300}`，目标短暂消失（转角 / 遮挡 / 死亡）时继续锁上一帧角度，不恢复、不抖动；关锁 / Panic 才写回进入锁之前的原值。
+- **提高锁频**：`kLockStepInterval = 1 ms`（原 2 ms），锁开启时生效，压住 64 Hz 预测重算。
+- **诊断**：`[mem]` 行新增 `lock=%d`；面板行改为「子弹追踪内存锁 / 锁射击角·视角不动」。
+
+## 3. 验证结果
+
+- 生成器实跑成功：`m_angEyeAngles=17616`、`m_angStashedShootAngles=11752`、`m_angEyeAnglesVelocity=17832`、`m_arrOldEyeAngles=17784`。
+- `cmake --build build -j` 16/16，0 warning / 0 error；`ctest` 1/1 passed；`read_lints` 0 diagnostics。
+- **实机锁角**（Xvfb 独立实例，仅开 `bulletTrack`，纯读采样 5 次）：
+  ```
+  t0: eye=(2.10,119.36,0) stashed=(2.10,119.36,0) v_angle=(39.82,133.98,0) vel=(0,0,0)
+  t1: eye=(2.10,119.36,0) stashed=(2.10,119.36,0) v_angle=(39.82,133.98,0) vel=(0,0,0)
+  t2..t4: eye=(2.10,119.37,0) stashed=(2.10,119.37,0) v_angle=(39.82,133.98,0)
+  [mem] ... missing=0 writes=11892 target=69 lock=1 bullet=1 ...
+  ```
+  射击角稳定锁在 69 米目标，`v_angle` 五次采样完全不变 —— 视角与准星确实没动；角速度被清零。
+- **未验证**：真实对局里服务器是否按写入角结算弹道。服务器权威与 pSilent 时序仍需实战确认，本轮不伪造命中证据。
+
+## 4. 使用
+
+- 面板「内存 → 子弹追踪内存锁」开启，「触发键」保持 0 = 常驻；**必须重启程序**加载新二进制。
+- 日志页 `[mem] ... bullet=1 lock=1 target>=0 missing=0` 表示锁已生效。
+- `bulletLockHoldMs` 可调目标丢失后的保持时长；Panic（F9）会恢复原始射击角。
+
+## 5. 遗留风险
+
+1. 服务器权威：联机对战的弹道由服务器按自身 usrcmd 结算，客户端锁角主要作用于本地预测与射击暂存角；本地 / 自建服务器更可能完全生效。
+2. `m_arrOldEyeAngles` 是数组，本轮只清前 12 字节，若游戏读取更深的历史项仍可能回滚。
+3. 1 ms 写入使 `writes` 快速增长（实测 3 秒约 1.2 万次），CPU 开销可忽略但日志量增加。
+4. 目标全部被队伍过滤或超出 `bulletTrackMaxDistance` 时 `target=-1`，锁会保持上一帧角度 300 ms 后停止写入，属预期。
+
+---
+
+# 阶段四十九：视角一直在动 —— 定位到旋转与锁角联动
+
+## 1. 现象
+
+用户反馈「怎么视角一直在动 我想不动就秒」。前一阶段已把追踪改成纯内存锁，但画面仍在持续转动，且锁没有命中。
+
+## 2. 取证（纯只读高频采样，40 次 × 2 ms）
+
+```
+t00 v_angle=(31.744,-2.237,0) eye=(0,0,0) stash=(0,0,0) rot=(0,0.31,0)   absRot=(0,0.31,0)
+t08 v_angle=(31.744,-2.237,0) eye=(0,0,0) stash=(0,0,0) rot=(0,3.944,0)  absRot=(0,3.944,0)
+t16 v_angle=(31.744,-2.237,0) ...                        rot=(0,7.206,0)  absRot=(0,7.206,0)
+t24 v_angle=(31.744,-2.237,0) ...                        rot=(0,10.461,0) absRot=(0,10.461,0)
+t32 v_angle=(31.744,-2.237,0) ...                        rot=(0,13.707,0) absRot=(0,13.707,0)
+v_angle 变化次数 = 0/39
+```
+
+- `v_angle` 一次没动 —— 相机角本身没被改写，用户看到的「视角动」来自**模型渲染旋转** `m_angAbsRotation` 每 16 ms 递增约 3.3°。
+- 运行配置 `spin=1`、`bulletTrack=0`：阶段四十二为让旋转「可见」而同时写了 `m_angRotation` 与 `m_angAbsRotation`，后者是渲染世界旋转，直接带动画面；而追踪锁被旧实例写回成关闭，所以「秒」也没发生。
+- 运行中的 `cs2_lite` 启动于 21:13:43，新二进制 21:14:00 才编译 —— 又是旧实例。
+
+## 3. 修复
+
+- `MemoryConfig` 新增两个视角保护开关，均默认真：
+  - `spinKeepView`：真时只写 `m_angRotation`（模型本地旋转），**不写 `m_angAbsRotation`**；画面静止。置假才追求可见旋转（旧行为）。
+  - `bulletLockProtectView`：锁角帧内先读玩家本帧真实 `v_angle`，写完 `m_angEyeAngles` / `m_angStashedShootAngles` / 角速度 / 历史角之后，**最后把 `v_angle` 写回**。压住 eye → 相机角的联动，玩家自己转视角照常生效，功能不额外带动一帧。
+- `MemoryEngine` 对应改两处：`spin` 分支按 `spinKeepView` 决定是否写 absRot；锁角分支在所有射击角写入之后写回 `v_angle`。
+- 配置全链路：`Config` 读写、`default.json`、面板「内存」页两个开关（追踪参数「视角不动(写回v_angle)」、旋转参数「视角不动(不写absRot)」）、`apply()` / `syncFrom()` 同步。
+- 单测：`testBulletLockDefaults` 断言两个保护默认真；往返测试覆盖显式置假。
+- 运行配置落定：`spin=false`、`spinKeepView=true`、`bulletTrack=true`、`bulletTrackKey=0`、`bulletLockHoldMs=300`、`bulletLockProtectView=true`。
+
+## 4. 验证结果
+
+- `cmake --build build -j` 13/13，0 warning / 0 error；`ctest` 1/1 passed；`read_lints` 0 diagnostics。
+- Xvfb `:84` 冒烟（新二进制）`app_exit=124` 存活、stderr 0 字节。
+- 四份 JSON 解析合法，运行配置 offsets 66 键。
+- **未验证**：游戏内实际观感与命中。取证后 cs2 进程退出（`cs2 pids=[]`），无法再跑独立实例采样；且正在运行的是旧二进制，必须重启才能加载本轮修复。
+
+## 5. 使用
+
+**必须重启程序**，否则旧实例继续写 `m_angAbsRotation` 并覆盖运行配置。重启后：
+- `[mem] ... bullet=1 lock=1 target>=0` 表示常驻锁生效；
+- 追踪与旋转参数里两个「视角不动」保持开启；
+- 想要模型可见旋转就把「视角不动(不写absRot)」关掉，代价是画面会跟着转 —— 这正是本轮问题的来源。
+
+## 6. 遗留风险
+
+1. `bulletLockProtectView` 每帧写回 `v_angle`，与玩家同帧的鼠标输入存在 1 ms 级竞态，极端情况下可能吞掉一次极小的视角增量。
+2. `spinKeepView=true` 时身体旋转在画面上可能不明显（回到阶段四十一的现象），这是「视角不动」的代价。
+3. 旧实例未重启时会把 `build/config.json` 写回，重新关掉 `bulletTrack`；重启前配置改动不持久。
+4. 服务器权威：弹道是否按写入角结算仍需实战确认，本轮不伪造命中证据。
+
+---
+
+# 阶段五十：减小散布后打人有时没伤害
+
+## 1. 现象
+
+开启「弹着点收成一点」后，画面准星收拢了，但命中反馈时有时无，服务器判定不稳定。
+
+## 2. 根因
+
+阶段四十七的清零把两组字段混在一起处理，其中一组**参与客户端弹道预测**：
+
+- 预测组：`m_iShotsFired`（连发计数）、`m_fAccuracyPenalty`、`m_fAccuracySmoothedForZoom`、`m_flTurningInaccuracy`、`m_flTurningInaccuracyDelta`、`m_flRecoilIndex`、`m_iRecoilIndex`。
+- 视觉组：`m_flFlinchStack`、`m_flInterpolatedInaccuracy`、`m_vClientScopeInaccuracy`、`m_flLastShakeTime`。
+
+把预测组每 1 ms 压成 0，客户端预测会认为「永远第一发、散布恒为 0」，本地判定命中；服务器仍按真实连发计数与散布结算，于是服务端判定 miss → 表现为「打中却没伤害」。`m_iShotsFired` 被反复归零还会让客户端射速/后坐状态推进异常，加重这种分叉。
+
+## 3. 修复
+
+- `MemoryConfig` 新增 `accuracySafeMode{true}`：
+  - 真（默认）：只清视觉组，**不碰**预测组，客户端预测与服务器保持一致；准星照样收拢。
+  - 假：恢复阶段四十七的激进清零，代价是命中判定与服务器分叉。
+- `MemoryEngine` 把散布块拆成视觉组 / 预测组，预测组受 `accuracySafeMode` 门控；武器实体解析抽成匿名命名空间的 `resolveActiveWeapon()`，视觉组也复用它清 `m_flLastShakeTime`。
+- `[mem]` 诊断行新增 `accsafe=%d`。
+- 配置全链路：`Config` 读写、`default.json`、面板「弹着点收成一点」参数新增「安全模式(不清预测字段)」，`apply()` / `syncFrom()` 同步。
+- 单测：默认断言 `accuracySafeMode` 为真，往返测试覆盖显式置假。
+
+## 4. 验证结果
+
+- `cmake --build build -j` 13/13，0 warning / 0 error；`ctest` 1/1 passed；`read_lints` 0 diagnostics。
+- 运行配置落定：`accuracy=true` / `accuracySafeMode=true`；四份 JSON 解析合法。
+- 会话内实机采样（pid 73658）：`m_iShotsFired`、`m_flFlinchStack`、`m_flInterpolatedInaccuracy`、`m_vClientScopeInaccuracy` 均为常量 0 —— 说明旧行为确实在逐帧清零，与「预测分叉」的判断一致。
+- **未验证**：修复后游戏内命中是否稳定。收尾时游戏已退回主菜单（`pawn=0`，`[mem] skip`），无法再进对局采样；本轮不伪造命中证据。
+
+## 5. 使用
+
+- 重启程序（运行中的实例仍是旧二进制，会继续清零预测字段）。
+- 面板「内存 → 弹着点收成一点 → 安全模式(不清预测字段)」保持开启。
+- 日志页 `[mem] ... acc=1 accsafe=1` 表示安全模式生效。
+- 只有在单机 / 自建服务器、且确认服务器不校验散布时，才考虑关掉安全模式换更「直」的弹道。
+
+## 6. 遗留风险
+
+1. 安全模式下不再清 `m_iShotsFired`，连发散布按真实曲线增长；视觉准星收拢但实际散布仍在，属于「可见与真实不一致」的取舍。
+2. 静态 VData 的 `m_flSpread` 仍未接入（缺指针链），基础散布未清零。
+3. 服务器权威：即便客户端完全一致，服务器仍按自身 usercmd 与散结算，线上不保证命中。
+4. 武器实体链断（未持枪 / 观战）时，武器侧视觉字段跳过，属预期。
+
+---
+
+# 阶段五十一：面板改为深色双栏卡片布局
+
+## 1. 需求
+
+按参考图把 UI 改成「左侧品牌 / 搜索 / 分类列表 + 右侧页头 + 卡片行表」的双栏结构。
+
+## 2. 实现
+
+- 样式表整体改为深色：底板 `rgba(16,18,21,235)`，卡片 `rgba(255,255,255,12)` + 1px 内描边，圆角 10px；文字改浅色系（标题 #FFFFFF / 正文 #E7E9EC / 次要 #757B84）。
+- `ToggleSwitch` 轨道与滑块随状态反转：关闭是暗轨道 + 亮滑块，开启是近白轨道 + 暗滑块，避免白点贴白轨看不清。
+- 侧栏 196px：`CS2 LITE` 字标 + 连接状态副标题、搜索框、五个带几何图标的分类（◈ ◎ ⌖ ▤ ≡）、底部「恢复上一次 / 关闭」。
+- 右栏：页头（页标题 + 模块副标题 + 右上「保存」）、实时统计行、`QStackedWidget` 卡片行表、底部偏移提示。
+- `makeRow` 改为卡片：左侧两行文字（名称 + 副标题），右侧「参数」按钮与开关；参数面板随行展开，深色描边。
+- 新增 `Menu::setPage()` / `Menu::filterRows()`：切页同步页头标题与侧栏选中态；搜索框按卡片 `rowName` 过滤当前页，隐藏整行 unit（参数面板一起收起）。
+- 副标题按页回退：`addPage("ESP"/"Combat"/"Trigger"/"Memory"/"Diagnostics")` 记录模块名，未显式给 hint 的行统一用它。
+- 窗口宽度 540 → 720，行表下限 456 → 520，行距 2 → 8。
+
+## 3. 验证结果
+
+- `cmake --build build -j` 0 warning / 0 error；`ctest` 1/1 passed。
+- Xvfb `:82` 实机截图确认：双栏比例、卡片行、开关、侧栏图标与底部按钮均按预期渲染（截图 `/tmp/ui_layout2.png`）。
+- **未验证**：搜索过滤的键盘输入路径（Xvfb 无 xdotool 注入），只验证了构造与切页。
+
+## 4. 遗留风险
+
+1. 搜索只匹配卡片名称，不匹配参数名，也不跨页搜索。
+2. 行距 8 + 卡片内边距 10 让单页可见行数变少，长页依赖滚动。
+3. 深色底板在明亮画面上对比度高，面板存在感比旧白色玻璃更强。
+
+---
+
+# 阶段五十二：开了安全模式仍然没伤害
+
+## 1. 现象
+
+用户反馈：散布开「安全模式」后，打人仍然有时没伤害。
+
+## 2. 根因（两处叠加）
+
+1. **安全组划错了**。阶段五十把 `m_flInterpolatedInaccuracy` 与 `m_vClientScopeInaccuracy` 当成「纯视觉」留在安全组，但它们是**客户端计算散布的输入**：清成 0 后本地预测认为「散布为 0、必中」，服务器仍按真实散布结算 → 客户端显示命中、服务器判 miss。真正的纯视模字段只有 `m_flFlinchStack`（受击抖动）与 `m_flLastShakeTime`（枪口抖动时间戳）。
+2. **锁角只写射击角，服务器按真实视角结算**。`m_angEyeAngles` 被锁到目标，但 `usercmd` 的视角仍来自 `v_angle`；服务器按后者算弹道，于是本地预测命中、服务端 miss —— 同样表现为「打中没伤害」。这是阶段四十九为「视角不动」付出的代价，此前没有显式开关。
+
+## 3. 修复
+
+- **安全组收窄**：`accuracySafeMode=true` 时只清 `m_flFlinchStack` + `m_flLastShakeTime`；`m_flInterpolatedInaccuracy`、`m_vClientScopeInaccuracy`、`m_iShotsFired`、`m_fAccuracyPenalty`、`m_fAccuracySmoothedForZoom`、`m_flTurningInaccuracy(+Delta)`、后坐力索引全部移入预测组，只有关掉安全模式才写。
+- **新增 `bulletLockSyncView{false}`（命中优先）**：为真时把 `v_angle` 一起写成锁定角，让下一条 `usercmd` 的视角与射击角一致，服务器按锁定方向结算；代价是相机跟着目标转。默认关，保持「视角不动」的旧行为。
+- `[mem]` 诊断行新增 `syncview=%d`。
+- 配置全链路：`Config` 读写、`default.json`、面板「子弹追踪内存锁」参数新增「命中优先(视角跟随)」，`apply()` / `syncFrom()` 同步。
+- 单测：默认断言 `!bulletLockSyncView`，往返测试覆盖显式打开。
+
+## 4. 验证结果
+
+- `cmake --build build -j` 13/13，0 warning / 0 error；`ctest` 1/1 passed。
+- 实机会话采样（pid 82994）：武器链断（`handle=0xffffffff`），`m_iShotsFired=11` 未被清零 —— 与「安全模式下不再碰预测组」一致。
+- 运行配置落定：`accuracy=true` / `accuracySafeMode=true` / `bulletLockSyncView=false`；四份 JSON 合法。
+- **未验证**：修复后游戏内命中是否稳定。采样时武器链不可用，且运行实例仍是旧二进制；本轮不伪造命中证据。
+
+## 5. 使用
+
+- 重启程序。
+- 要「准星不动」：保持「命中优先」关闭，接受服务器可能判 miss。
+- 要「打中就有伤害」：打开「子弹追踪内存锁 → 命中优先(视角跟随)」，此时相机随目标转，但 usercmd 视角与射击角一致，服务器按锁定方向结算。
+- 散布安全模式保持开启；关掉它等于恢复「本地预测完美、服务器不认」的旧行为。
+- 日志页确认：`[mem] ... acc=1 accsafe=1 syncview=?`。
+
+## 6. 遗留风险
+
+1. 「视角不动」与「命中稳定」在客户端锁角方案下互斥，只能二选一，这是服务器权威的硬约束。
+2. `bulletLockSyncView` 打开后相机每帧被写，可能压过玩家自己的鼠标输入，手感变「粘」。
+3. 安全模式下准星不再收拢（不准度插值保留），视觉上仍是原始散布。
+4. 静态 VData 的 `m_flSpread` 仍未接入（缺指针链）。
+
+---
+
+# 阶段五十三：扳机页被掏空 —— 行迁移与两个缺失入口
+
+## 1. 现象
+
+用户反馈「UI 的扳机里没功能了」。
+
+## 2. 取证
+
+- 截图（Xvfb `:81`，点击侧栏「扳机」）：页面只有 `自动扳机` / `静默锁头` 两张卡，下方整片空白。
+- 参数面板能正常展开（`按住 / 冷却 / 触发键`），说明不是点击失效，是**行太少**。
+- 对照 `git show HEAD~1` 与当前版本：旧版扳机页同样只有这两行，但旧版「自瞄」页还挂着 `后坐力抵消`、`子弹追踪`，两页加起来是五行；重排后这两行仍留在自瞄页，扳机页于是只剩两行。
+- 翻 `TriggerConfig` / `SilentConfig` 发现两个字段**从来没有 UI 入口**：`trigger.teamCheck`、`silent.cooldownMs`。它们一直在配置里读写，但面板从未暴露。
+
+## 3. 修复
+
+- 把 `子弹追踪`（XTest 贴头跟随）与 `后坐力抵消`（反向补偿准星）从「瞄准」页迁到「扳机」页：两者都属于开火链路，放在扳机页更顺手，也让两页行数均衡。
+- 扳机页四张卡补齐副标题：`准星进人即开火` / `贴头开火后归位` / `贴头跟随准星` / `反向补偿准星`。
+- 新增两个缺失入口：`自动扳机 → 过滤队友`（`trigger.teamCheck`）、`静默锁头 → 冷却`（`silent.cooldownMs`，10–2000 ms），构造、`apply()`、`syncFrom()` 全链路接通。
+- 瞄准页现在只留 `自瞄` 一张卡，参数不变。
+
+## 4. 验证结果
+
+- `cmake --build build -j` 0 warning / 0 error；`ctest` 1/1 passed；`read_lints` 0 diagnostics。
+- Xvfb `:79` 截图：扳机页四张卡（自动扳机 / 静默锁头 / 子弹追踪 / 后坐力抵消）全部渲染。
+- Xvfb `:78` 截图：展开「静默锁头」参数，`半径 全屏 / 停留 30 ms / 冷却 120 ms / 触发键 中键 / 过滤队友` 五项齐全，冷却为新入口。
+
+## 5. 遗留风险
+
+1. 行迁移后「瞄准」页只剩一张卡，显得空；后续可考虑把自瞄的策略 / 平滑拆成多卡。
+2. `trigger.teamCheck` 与 `silent.cooldownMs` 这两个字段此前一直无入口，说明手工写配置的人可能已经改过值；首次打开面板会以配置文件为准回填，不会被覆盖。
+3. 每页行数不均，行表下限 520 让短页留白较多。

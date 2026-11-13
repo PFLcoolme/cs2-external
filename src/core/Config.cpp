@@ -58,6 +58,50 @@ Offsets offsetsFromJson(const QJsonObject& obj) {
     o.boneNeck = asInt(obj, "boneNeck", o.boneNeck);
     o.boneChest = asInt(obj, "boneChest", o.boneChest);
     o.bonePelvis = asInt(obj, "bonePelvis", o.bonePelvis);
+
+    o.m_angEyeAngles = asInt(obj, "m_angEyeAngles", o.m_angEyeAngles);
+    o.m_angStashedShootAngles =
+        asInt(obj, "m_angStashedShootAngles", o.m_angStashedShootAngles);
+    o.m_angEyeAnglesVelocity =
+        asInt(obj, "m_angEyeAnglesVelocity", o.m_angEyeAnglesVelocity);
+    o.m_arrOldEyeAngles = asInt(obj, "m_arrOldEyeAngles", o.m_arrOldEyeAngles);
+    o.m_angViewAngles = asInt(obj, "m_angViewAngles", o.m_angViewAngles);
+    o.m_angRotation = asInt(obj, "m_angRotation", o.m_angRotation);
+    o.m_vecVelocity = asInt(obj, "m_vecVelocity", o.m_vecVelocity);
+    o.m_flVelocityModifier = asInt(obj, "m_flVelocityModifier", o.m_flVelocityModifier);
+    o.m_MoveType = asInt(obj, "m_MoveType", o.m_MoveType);
+    o.m_aimPunchCache = asInt(obj, "m_aimPunchCache", o.m_aimPunchCache);
+    o.aimPunchCacheBytes = asInt(obj, "aimPunchCacheBytes", o.aimPunchCacheBytes);
+    o.eyeHeight = static_cast<float>(obj.value("eyeHeight").toDouble(o.eyeHeight));
+    o.m_angAbsRotation = asInt(obj, "m_angAbsRotation", o.m_angAbsRotation);
+    o.m_pCameraServices = asInt(obj, "m_pCameraServices", o.m_pCameraServices);
+    o.m_pMovementServices = asInt(obj, "m_pMovementServices", o.m_pMovementServices);
+    o.m_flMaxspeed = asInt(obj, "m_flMaxspeed", o.m_flMaxspeed);
+    o.m_vecCsViewPunchAngle =
+        asInt(obj, "m_vecCsViewPunchAngle", o.m_vecCsViewPunchAngle);
+    o.m_aimPunchVel = asInt(obj, "m_aimPunchVel", o.m_aimPunchVel);
+    o.m_unpredictableBaseAngle =
+        asInt(obj, "m_unpredictableBaseAngle", o.m_unpredictableBaseAngle);
+    o.m_vecAbsVelocity = asInt(obj, "m_vecAbsVelocity", o.m_vecAbsVelocity);
+    o.m_pWeaponServices = asInt(obj, "m_pWeaponServices", o.m_pWeaponServices);
+    o.m_hActiveWeapon = asInt(obj, "m_hActiveWeapon", o.m_hActiveWeapon);
+    o.m_iShotsFired = asInt(obj, "m_iShotsFired", o.m_iShotsFired);
+    o.m_flFlinchStack = asInt(obj, "m_flFlinchStack", o.m_flFlinchStack);
+    o.m_flInterpolatedInaccuracy =
+        asInt(obj, "m_flInterpolatedInaccuracy", o.m_flInterpolatedInaccuracy);
+    o.m_vClientScopeInaccuracy =
+        asInt(obj, "m_vClientScopeInaccuracy", o.m_vClientScopeInaccuracy);
+    o.m_fAccuracyPenalty = asInt(obj, "m_fAccuracyPenalty", o.m_fAccuracyPenalty);
+    o.m_fAccuracySmoothedForZoom =
+        asInt(obj, "m_fAccuracySmoothedForZoom", o.m_fAccuracySmoothedForZoom);
+    o.m_flTurningInaccuracy =
+        asInt(obj, "m_flTurningInaccuracy", o.m_flTurningInaccuracy);
+    o.m_flTurningInaccuracyDelta =
+        asInt(obj, "m_flTurningInaccuracyDelta", o.m_flTurningInaccuracyDelta);
+    o.m_iRecoilIndex = asInt(obj, "m_iRecoilIndex", o.m_iRecoilIndex);
+    o.m_flRecoilIndex = asInt(obj, "m_flRecoilIndex", o.m_flRecoilIndex);
+    o.m_flLastShakeTime = asInt(obj, "m_flLastShakeTime", o.m_flLastShakeTime);
+    o.m_flSpreadVData = asInt(obj, "m_flSpreadVData", o.m_flSpreadVData);
     return o;
 }
 
@@ -95,6 +139,40 @@ QJsonObject offsetsToJson(const Offsets& o) {
     obj["boneNeck"] = o.boneNeck;
     obj["boneChest"] = o.boneChest;
     obj["bonePelvis"] = o.bonePelvis;
+    obj["m_angEyeAngles"] = o.m_angEyeAngles;
+    obj["m_angStashedShootAngles"] = o.m_angStashedShootAngles;
+    obj["m_angEyeAnglesVelocity"] = o.m_angEyeAnglesVelocity;
+    obj["m_arrOldEyeAngles"] = o.m_arrOldEyeAngles;
+    obj["m_angViewAngles"] = o.m_angViewAngles;
+    obj["m_angRotation"] = o.m_angRotation;
+    obj["m_vecVelocity"] = o.m_vecVelocity;
+    obj["m_flVelocityModifier"] = o.m_flVelocityModifier;
+    obj["m_MoveType"] = o.m_MoveType;
+    obj["m_aimPunchCache"] = o.m_aimPunchCache;
+    obj["aimPunchCacheBytes"] = o.aimPunchCacheBytes;
+    obj["eyeHeight"] = static_cast<double>(o.eyeHeight);
+    obj["m_angAbsRotation"] = o.m_angAbsRotation;
+    obj["m_pCameraServices"] = o.m_pCameraServices;
+    obj["m_pMovementServices"] = o.m_pMovementServices;
+    obj["m_flMaxspeed"] = o.m_flMaxspeed;
+    obj["m_vecCsViewPunchAngle"] = o.m_vecCsViewPunchAngle;
+    obj["m_aimPunchVel"] = o.m_aimPunchVel;
+    obj["m_unpredictableBaseAngle"] = o.m_unpredictableBaseAngle;
+    obj["m_vecAbsVelocity"] = o.m_vecAbsVelocity;
+    obj["m_pWeaponServices"] = o.m_pWeaponServices;
+    obj["m_hActiveWeapon"] = o.m_hActiveWeapon;
+    obj["m_iShotsFired"] = o.m_iShotsFired;
+    obj["m_flFlinchStack"] = o.m_flFlinchStack;
+    obj["m_flInterpolatedInaccuracy"] = o.m_flInterpolatedInaccuracy;
+    obj["m_vClientScopeInaccuracy"] = o.m_vClientScopeInaccuracy;
+    obj["m_fAccuracyPenalty"] = o.m_fAccuracyPenalty;
+    obj["m_fAccuracySmoothedForZoom"] = o.m_fAccuracySmoothedForZoom;
+    obj["m_flTurningInaccuracy"] = o.m_flTurningInaccuracy;
+    obj["m_flTurningInaccuracyDelta"] = o.m_flTurningInaccuracyDelta;
+    obj["m_iRecoilIndex"] = o.m_iRecoilIndex;
+    obj["m_flRecoilIndex"] = o.m_flRecoilIndex;
+    obj["m_flLastShakeTime"] = o.m_flLastShakeTime;
+    obj["m_flSpreadVData"] = o.m_flSpreadVData;
     return obj;
 }
 
@@ -127,6 +205,7 @@ Config Config::load(const std::string& path) {
 
     cfg.togglePanelKey = asInt(root, "togglePanelKey", cfg.togglePanelKey);
     cfg.panicKey = asInt(root, "panicKey", cfg.panicKey);
+    cfg.resetStatsKey = asInt(root, "resetStatsKey", cfg.resetStatsKey);
 
     if (root.value("aim").isObject()) {
         const QJsonObject o = root.value("aim").toObject();
@@ -187,6 +266,38 @@ Config Config::load(const std::string& path) {
         cfg.trigger.teamCheck = o.value("teamCheck").toBool(cfg.trigger.teamCheck);
     }
 
+    if (root.value("memory").isObject()) {
+        const QJsonObject o = root.value("memory").toObject();
+        cfg.memory.speed = o.value("speed").toBool(cfg.memory.speed);
+        cfg.memory.speedFactor =
+            static_cast<float>(o.value("speedFactor").toDouble(cfg.memory.speedFactor));
+        cfg.memory.bulletTrack = o.value("bulletTrack").toBool(cfg.memory.bulletTrack);
+        cfg.memory.bulletTrackKey = asInt(o, "bulletTrackKey", cfg.memory.bulletTrackKey);
+        cfg.memory.bulletTrackMaxDistance = static_cast<float>(
+            o.value("bulletTrackMaxDistance").toDouble(cfg.memory.bulletTrackMaxDistance));
+        cfg.memory.bulletTrackTeamCheck =
+            o.value("bulletTrackTeamCheck").toBool(cfg.memory.bulletTrackTeamCheck);
+        cfg.memory.bulletLockHoldMs =
+            asInt(o, "bulletLockHoldMs", cfg.memory.bulletLockHoldMs);
+        cfg.memory.bulletLockProtectView =
+            o.value("bulletLockProtectView").toBool(cfg.memory.bulletLockProtectView);
+        cfg.memory.bulletLockSyncView =
+            o.value("bulletLockSyncView").toBool(cfg.memory.bulletLockSyncView);
+        cfg.memory.fly = o.value("fly").toBool(cfg.memory.fly);
+        cfg.memory.flyUpKey = asInt(o, "flyUpKey", cfg.memory.flyUpKey);
+        cfg.memory.flyDownKey = asInt(o, "flyDownKey", cfg.memory.flyDownKey);
+        cfg.memory.flySpeed = static_cast<float>(o.value("flySpeed").toDouble(cfg.memory.flySpeed));
+        cfg.memory.flyMoveType = asInt(o, "flyMoveType", cfg.memory.flyMoveType);
+        cfg.memory.spin = o.value("spin").toBool(cfg.memory.spin);
+        cfg.memory.spinDegreesPerSec = static_cast<float>(
+            o.value("spinDegreesPerSec").toDouble(cfg.memory.spinDegreesPerSec));
+        cfg.memory.spinKeepView = o.value("spinKeepView").toBool(cfg.memory.spinKeepView);
+        cfg.memory.noRecoil = o.value("noRecoil").toBool(cfg.memory.noRecoil);
+        cfg.memory.accuracy = o.value("accuracy").toBool(cfg.memory.accuracy);
+        cfg.memory.accuracySafeMode =
+            o.value("accuracySafeMode").toBool(cfg.memory.accuracySafeMode);
+    }
+
     if (root.value("esp").isObject()) {
         const QJsonObject o = root.value("esp").toObject();
         cfg.esp.enabled = o.value("enabled").toBool(cfg.esp.enabled);
@@ -207,6 +318,8 @@ Config Config::load(const std::string& path) {
         cfg.esp.heightIndicator =
             o.value("heightIndicator").toBool(cfg.esp.heightIndicator);
         cfg.esp.crosshairInfo = o.value("crosshairInfo").toBool(cfg.esp.crosshairInfo);
+        cfg.esp.statsHud = o.value("statsHud").toBool(cfg.esp.statsHud);
+        cfg.esp.statsHudPos = asInt(o, "statsHudPos", cfg.esp.statsHudPos);
         cfg.esp.radarPos = asInt(o, "radarPos", cfg.esp.radarPos);
         cfg.esp.listPos = asInt(o, "listPos", cfg.esp.listPos);
         cfg.esp.trail = o.value("trail").toBool(cfg.esp.trail);
@@ -224,13 +337,30 @@ Config Config::load(const std::string& path) {
 }
 
 void Config::save(const std::string& path) const {
+    // 面板改一个开关就会用内存中的 Config 覆盖整份文件。若磁盘上有本进程
+    // 不认识的字段（旧二进制 + 新生成器输出），直接写会把它们抹掉，
+    // 下一轮又变成「偏移全 0、功能没反应」。先读回并保留未知键。
     QJsonObject root;
+    QFile existing(QString::fromStdString(path));
+    if (existing.open(QIODevice::ReadOnly)) {
+        const QJsonDocument doc = QJsonDocument::fromJson(existing.readAll());
+        existing.close();
+        if (doc.isObject()) root = doc.object();
+    }
     root["process"] = QString::fromStdString(process);
     root["module"] = QString::fromStdString(module);
     root["offsetsFile"] = QString::fromStdString(offsetsFile);
-    root["offsets"] = offsetsToJson(offsets);
+    QJsonObject offsetsObj = offsetsToJson(offsets);
+    if (root.value("offsets").isObject()) {
+        const QJsonObject disk = root.value("offsets").toObject();
+        for (auto it = disk.constBegin(); it != disk.constEnd(); ++it) {
+            if (!offsetsObj.contains(it.key())) offsetsObj.insert(it.key(), it.value());
+        }
+    }
+    root["offsets"] = offsetsObj;
     root["togglePanelKey"] = togglePanelKey;
     root["panicKey"] = panicKey;
+    root["resetStatsKey"] = resetStatsKey;
 
     QJsonObject aimObj;
     aimObj["enabled"] = aim.enabled;
@@ -279,6 +409,29 @@ void Config::save(const std::string& path) const {
     triggerObj["teamCheck"] = trigger.teamCheck;
     root["trigger"] = triggerObj;
 
+    QJsonObject memoryObj;
+    memoryObj["speed"] = memory.speed;
+    memoryObj["speedFactor"] = static_cast<double>(memory.speedFactor);
+    memoryObj["bulletTrack"] = memory.bulletTrack;
+    memoryObj["bulletTrackKey"] = memory.bulletTrackKey;
+    memoryObj["bulletTrackMaxDistance"] = static_cast<double>(memory.bulletTrackMaxDistance);
+    memoryObj["bulletTrackTeamCheck"] = memory.bulletTrackTeamCheck;
+    memoryObj["bulletLockHoldMs"] = memory.bulletLockHoldMs;
+    memoryObj["bulletLockProtectView"] = memory.bulletLockProtectView;
+    memoryObj["bulletLockSyncView"] = memory.bulletLockSyncView;
+    memoryObj["fly"] = memory.fly;
+    memoryObj["flyUpKey"] = memory.flyUpKey;
+    memoryObj["flyDownKey"] = memory.flyDownKey;
+    memoryObj["flySpeed"] = static_cast<double>(memory.flySpeed);
+    memoryObj["flyMoveType"] = memory.flyMoveType;
+    memoryObj["spin"] = memory.spin;
+    memoryObj["spinDegreesPerSec"] = static_cast<double>(memory.spinDegreesPerSec);
+    memoryObj["spinKeepView"] = memory.spinKeepView;
+    memoryObj["noRecoil"] = memory.noRecoil;
+    memoryObj["accuracy"] = memory.accuracy;
+    memoryObj["accuracySafeMode"] = memory.accuracySafeMode;
+    root["memory"] = memoryObj;
+
     QJsonObject espObj;
     espObj["enabled"] = esp.enabled;
     espObj["box"] = esp.box;
@@ -296,6 +449,8 @@ void Config::save(const std::string& path) const {
     espObj["enemyListMax"] = esp.enemyListMax;
     espObj["heightIndicator"] = esp.heightIndicator;
     espObj["crosshairInfo"] = esp.crosshairInfo;
+    espObj["statsHud"] = esp.statsHud;
+    espObj["statsHudPos"] = esp.statsHudPos;
     espObj["radarPos"] = esp.radarPos;
     espObj["listPos"] = esp.listPos;
     espObj["trail"] = esp.trail;

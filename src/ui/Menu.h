@@ -14,6 +14,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QLineEdit;
 class QLabel;
 class QMoveEvent;
 class QPlainTextEdit;
@@ -58,6 +59,8 @@ private:
     void persist(const Config& config, const QString& message);
     // 把配置文件内容回填到控件，供外部改动后的热重载使用。
     void syncFrom(const Config& config);
+    // 清零本局命中 / 伤害 / 击杀：热键与日志页按钮共用同一入口。
+    void resetStats();
 
     AppState& state_;
     Game& game_;
@@ -88,6 +91,8 @@ private:
     QComboBox* espDamageColor_{nullptr};
     QCheckBox* espTeam_{nullptr};
     QCheckBox* espVisibility_{nullptr};
+    QCheckBox* espStatsHud_{nullptr};
+    QComboBox* espStatsHudPos_{nullptr};
 
     QCheckBox* aimEnabled_{nullptr};
     QComboBox* aimStrategy_{nullptr};
@@ -114,16 +119,42 @@ private:
     QCheckBox* silentTeam_{nullptr};
     QSpinBox* silentFov_{nullptr};
     QSpinBox* silentHold_{nullptr};
+    QSpinBox* silentCooldown_{nullptr};
     KeyBindButton* silentKey_{nullptr};
 
     QCheckBox* triggerEnabled_{nullptr};
     QSpinBox* triggerDelay_{nullptr};
     QSpinBox* triggerCooldown_{nullptr};
     KeyBindButton* triggerKey_{nullptr};
+    QCheckBox* triggerTeam_{nullptr};
 
-    // 全局快捷键：显隐面板 / 一键静默，可录制改键。
+    // 全局快捷键：显隐面板 / 一键静默 / 清零战绩，可录制改键。
     KeyBindButton* togglePanelKey_{nullptr};
     KeyBindButton* panicKey_{nullptr};
+    KeyBindButton* resetStatsKey_{nullptr};
+    QPushButton* resetStatsButton_{nullptr};
+
+    // 页四：直接内存功能（五组开关与参数）。
+    QCheckBox* memSpeed_{nullptr};
+    QDoubleSpinBox* memSpeedFactor_{nullptr};
+    QCheckBox* memBulletTrack_{nullptr};
+    KeyBindButton* memBulletTrackKey_{nullptr};
+    QSpinBox* memBulletTrackDistance_{nullptr};
+    QCheckBox* memBulletTeam_{nullptr};
+    QCheckBox* memBulletProtectView_{nullptr};
+    QCheckBox* memBulletSyncView_{nullptr};
+    QCheckBox* memFly_{nullptr};
+    KeyBindButton* memFlyUpKey_{nullptr};
+    KeyBindButton* memFlyDownKey_{nullptr};
+    QSpinBox* memFlySpeed_{nullptr};
+    QSpinBox* memFlyMoveType_{nullptr};
+    QCheckBox* memSpin_{nullptr};
+    QSpinBox* memSpinRate_{nullptr};
+    QCheckBox* memSpinKeepView_{nullptr};
+    QCheckBox* memNoRecoil_{nullptr};
+    QCheckBox* memAccuracy_{nullptr};
+    QCheckBox* memAccuracySafe_{nullptr};
+    QLabel* memStatus_{nullptr};
 
     QLabel* status_{nullptr};
     // 叠加层每帧的采集/绘制/过滤计数：区分「没敌人」和「被过滤」。
@@ -138,9 +169,16 @@ private:
     bool syncing_{false};
     QPlainTextEdit* logView_{nullptr};
 
-    // 左侧类别导航 + 右侧分页：类别仍然是四页，页内一个功能一行。
-    QPushButton* tabs_[4]{};
+    // 左侧类别导航 + 右侧分页：透视 / 自瞄 / 扳机 / 内存 / 日志。
+    QPushButton* tabs_[5]{};
     QStackedWidget* pages_{nullptr};
+    // 页头：标题 + 副标题随分类切换，右侧是落盘按钮。
+    QLabel* pageTitle_{nullptr};
+    QLabel* pageSub_{nullptr};
+    QLineEdit* search_{nullptr};
+    // 按名称过滤当前页的卡片行，空串恢复全部。
+    void filterRows(const QString& keyword);
+    void setPage(int index);
 
     // 有合成器时走 ARGB 半透明窗口，背景由合成器实时模糊，能跟随画面变化；
     // 没有合成器才退回「全屏快照 + 自模糊」，那套是静态的，只为兜底。

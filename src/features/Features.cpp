@@ -1,5 +1,7 @@
 #include "Features.h"
 
+#include "core/LogPath.h"
+
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -19,11 +21,13 @@ constexpr int kLoopIntervalMs = 1;
 constexpr int kTogglePanelKey = 0xFFC5;  // XK_F8
 // F9：Panic。一键停掉叠加层与全部输入合成，按一下回到完全静默。
 constexpr int kPanicKey = 0xFFC6;  // XK_F9
+// F10：把本局命中 / 伤害 / 击杀计数清零，不必重启进程。
+constexpr int kResetStatsKey = 0xFFC7;  // XK_F10
 
-// 诊断输出：始终追加写入 /tmp/wv_lite.log（带节流），WV_DEBUG=1 时同时写 stderr。
-// 这样无论以 sudo 还是普通用户启动，都能事后读取按键/门控/目标证据。
-// 文件超过 kTraceMaxBytes 就截断重来：纯追加无上限时，长期挂机能把这个文件撑到几百 MB。
-constexpr const char* kTracePath = "/tmp/wv_lite.log";
+// 诊断输出：追加写入 wv::logPath()（带节流），WV_DEBUG=1 时同时写 stderr。
+// 路径由 LogPath.h 统一决定：root 跑过后共享文件可能 644 不可写，会自动退回
+// 带 uid 的私有文件，保证普通用户启动也留得下按键/门控/目标证据。
+// 文件超过 kTraceMaxBytes 就截断重来：纯追加无上限时，长期挂机能撑到几百 MB。
 constexpr long kTraceMaxBytes = 2L * 1024 * 1024;
 constexpr long kTraceCheckStep = 64L * 1024;  // 每累计写 64 KB 才检查一次，避免频繁 stat
 
@@ -36,7 +40,7 @@ struct TraceSink {
 TraceSink& traceSink() {
     static TraceSink sink = [] {
         TraceSink s;
-        s.file = std::fopen(kTracePath, "a");
+        s.file = std::fopen(logPath().c_str(), "a");
         if (s.file) {
             std::fseek(s.file, 0, SEEK_END);
             const long end = std::ftell(s.file);
@@ -51,7 +55,7 @@ TraceSink& traceSink() {
 void rotateTrace(TraceSink& sink) {
     if (!sink.file) return;
     std::fclose(sink.file);
-    sink.file = std::fopen(kTracePath, "w");
+    sink.file = std::fopen(logPath().c_str(), "w");
     sink.size = 0;
     sink.pending = 0;
 }
@@ -115,6 +119,21 @@ void Features::start() {
 void Features::stop() {
     if (!running_.exchange(false)) return;
     if (thread_.joinable()) thread_.join();
+    uinput_.close();
+}
+
+void Features::emitMove(void* displayPtr, int dx, int dy) {
+    if (uinput_.move(dx, dy)) return;
+    [[maybe_unused]] Display* display = static_cast<Display*>(displayPtr);
+    XTestFakeRelativeMotionEvent(display, dx, dy, CurrentTime);
+    XFlush(display);
+}
+
+void Features::emitButton(void* displayPtr, int button, bool down) {
+    if (uinput_.button(button, down)) return;
+    [[maybe_unused]] Display* display = static_cast<Display*>(displayPtr);
+    XTestFakeButtonEvent(display, button, down ? True : False, CurrentTime);
+    XFlush(display);
 }
 
 void Features::run() {
@@ -124,12 +143,20 @@ void Features::run() {
         return;
     }
 
+    // 常驻虚拟鼠标：SDL 需要几秒枚举热插拔设备，设备必须全程保持，
+    // 不能每次开火临时创建。XTest 在 raw input 下被游戏完全忽略。
+    const bool uinputReady = uinput_.open();
+    trace("[input] backend=%s uinput_ready=%d\n",
+          uinputReady ? "uinput" : "xtest-fallback", uinputReady ? 1 : 0);
+
     while (running_.load()) {
         // 热键从配置读，面板可录制改键；配置缺失时退回 F8 / F9 默认值。
         // 键位 <= 0 视为禁用（keyDown 对 0 恒真，不能直接传进去）。
         const std::shared_ptr<Config> hotkeyConfig = state_.config.load();
         const int toggleKey = hotkeyConfig ? hotkeyConfig->togglePanelKey : kTogglePanelKey;
         const int panicKey = hotkeyConfig ? hotkeyConfig->panicKey : kPanicKey;
+        const int resetStatsKey =
+            hotkeyConfig ? hotkeyConfig->resetStatsKey : kResetStatsKey;
 
         // 面板热键：只认按下沿，长按不会连续切换。放在所有早退分支之前，
         // 这样即使没连上游戏、偏移缺失，面板也还能收起来。
@@ -143,6 +170,11 @@ void Features::run() {
             state_.panicMode.store(state_.panicMode.load() != 0 ? 0 : 1);
         }
         lastPanic_ = panicHeld;
+
+        // 清零战绩：只认按下沿。放在 panic 早退之前，静默期间也能清掉旧数据。
+        const bool resetHeld = resetStatsKey > 0 && keyDown(display, resetStatsKey);
+        if (resetHeld && !lastResetStats_) state_.statsReset.store(1);
+        lastResetStats_ = resetHeld;
 
         // 静默期间不做任何输入合成，连诊断输出都停掉。
         if (state_.panicMode.load() != 0) {
@@ -219,6 +251,8 @@ void Features::run() {
         if (!tracking && config->aim.enabled && scopeHeld && fireHeld) {
             aimStep(display, *config, snapshot, attributes.width, attributes.height);
         }
+        // 子弹追踪走 MemoryEngine 的纯内存角度锁：本线程一个鼠标事件都不发，
+        // 准星与视角完全不动，射击角由引擎每帧锁到最近敌人头部。
         // 静默锁头：按住触发键时由本进程完成「贴头 + 点击 + 归位」，
         // 玩家不需要把准星放到敌人身上。与普通扳机互斥，否则一次按键会打出两发。
         const bool silentHeld =
@@ -307,7 +341,7 @@ bool focusChainBelongsTo(Display* display, std::uintptr_t gameWindow, int pid) {
 }  // namespace
 
 bool Features::gameActive(void* displayPtr, std::uintptr_t gameWindow, int pid) {
-    Display* display = static_cast<Display*>(displayPtr);
+    [[maybe_unused]] Display* display = static_cast<Display*>(displayPtr);
     if (!display || pid <= 0) return false;
 
     // 首选键盘焦点链：全屏且无窗口管理器接管时，_NET_ACTIVE_WINDOW 可能长期陈旧，
@@ -339,7 +373,7 @@ bool Features::gameActive(void* displayPtr, std::uintptr_t gameWindow, int pid) 
 bool Features::keyDown(void* displayPtr, int code) {
     if (code <= 0) return true;  // 0 = 不限，恒真
 
-    Display* display = static_cast<Display*>(displayPtr);
+    [[maybe_unused]] Display* display = static_cast<Display*>(displayPtr);
     if (!display) return false;
 
     if (code <= 5) {
@@ -370,7 +404,7 @@ bool Features::keyDown(void* displayPtr, int code) {
 
 void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& snapshot, int width,
                        int height) {
-    Display* display = static_cast<Display*>(displayPtr);
+    [[maybe_unused]] Display* display = static_cast<Display*>(displayPtr);
     const float centerX = static_cast<float>(width) * 0.5f;
     const float centerY = static_cast<float>(height) * 0.5f;
 
@@ -384,8 +418,10 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
         if (config.aim.teamCheck && player.team == snapshot.localTeam) continue;
         if (config.aim.maxDistance > 0.f && player.distance > config.aim.maxDistance) continue;
 
-        const float dx = player.headScreen.x - centerX;
-        const float dy = player.headScreen.y - centerY;
+        Vec2 delta{};
+        if (!screenDelta(player.headScreen, width, height, delta)) continue;
+        const float dx = delta.x;
+        const float dy = delta.y;
         const float distance = std::sqrt(dx * dx + dy * dy);
         if (distance < nearest) nearest = distance;
         if (distance >= config.aim.fovPixels) continue;
@@ -438,8 +474,7 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
     const int moveY = static_cast<int>(std::lround(deltaY));
     if (moveX == 0 && moveY == 0) return;
 
-    XTestFakeRelativeMotionEvent(display, moveX, moveY, CurrentTime);
-    XFlush(display);
+    emitMove(displayPtr, moveX, moveY);
     if (++debugAimTick_ % 200 == 0) {
         trace("[aim] target idx=%d err=(%.1f,%.1f) move=(%d,%d)\n", best->index,
                      static_cast<double>(best->headScreen.x - centerX),
@@ -449,7 +484,7 @@ void Features::aimStep(void* displayPtr, const Config& config, const Snapshot& s
 
 bool Features::trackStep(void* displayPtr, const Config& config, const Snapshot& snapshot,
                          int width, int height) {
-    Display* display = static_cast<Display*>(displayPtr);
+    [[maybe_unused]] Display* display = static_cast<Display*>(displayPtr);
     const float centerX = static_cast<float>(width) * 0.5f;
     const float centerY = static_cast<float>(height) * 0.5f;
 
@@ -462,8 +497,10 @@ bool Features::trackStep(void* displayPtr, const Config& config, const Snapshot&
         if (config.track.teamCheck && player.team == snapshot.localTeam) continue;
         if (config.track.maxDistance > 0.f && player.distance > config.track.maxDistance) continue;
 
-        const float dx = player.headScreen.x - centerX;
-        const float dy = player.headScreen.y - centerY;
+        Vec2 delta{};
+        if (!screenDelta(player.headScreen, width, height, delta)) continue;
+        const float dx = delta.x;
+        const float dy = delta.y;
         const float distance = std::sqrt(dx * dx + dy * dy);
         // fovPixels = 0 表示全屏：不设半径，屏幕上任何位置的敌人都是候选。
         if (config.track.fovPixels > 0.f && distance >= config.track.fovPixels) continue;
@@ -490,8 +527,7 @@ bool Features::trackStep(void* displayPtr, const Config& config, const Snapshot&
         std::lround((best->headScreen.y - centerY) / static_cast<float>(steps)));
     if (moveX == 0 && moveY == 0) return true;
 
-    XTestFakeRelativeMotionEvent(display, moveX, moveY, CurrentTime);
-    XFlush(display);
+    emitMove(displayPtr, moveX, moveY);
     if (++debugAimTick_ % 200 == 0) {
         trace("[track] target idx=%d err=(%.1f,%.1f) move=(%d,%d)\n", best->index,
               static_cast<double>(best->headScreen.x - centerX),
@@ -501,7 +537,7 @@ bool Features::trackStep(void* displayPtr, const Config& config, const Snapshot&
 }
 
 void Features::triggerStep(void* displayPtr, const Config& config, const Snapshot& snapshot) {
-    Display* display = static_cast<Display*>(displayPtr);
+    [[maybe_unused]] Display* display = static_cast<Display*>(displayPtr);
     if (snapshot.crosshairIndex < 0) return;
 
     const PlayerInfo* target = nullptr;
@@ -523,19 +559,17 @@ void Features::triggerStep(void* displayPtr, const Config& config, const Snapsho
     static thread_local std::mt19937 rng(std::random_device{}());
     std::uniform_int_distribution<int> hold(std::max(1, base - jitter), base + jitter);
 
-    XTestFakeButtonEvent(display, 1, True, CurrentTime);
-    XFlush(display);
+    emitButton(displayPtr, 1, true);
     std::this_thread::sleep_for(std::chrono::milliseconds(hold(rng)));
-    XTestFakeButtonEvent(display, 1, False, CurrentTime);
-    XFlush(display);
+    emitButton(displayPtr, 1, false);
 
     nextTrigger_ = std::chrono::steady_clock::now() +
                    std::chrono::milliseconds(std::max(1, config.trigger.cooldownMs));
 }
 
-bool Features::silentStep(void* displayPtr, const Config& config, const Snapshot& snapshot,
-                          int width, int height) {
-    Display* display = static_cast<Display*>(displayPtr);
+bool Features::silentStepWith(void* displayPtr, const SilentConfig& silent,
+                              const Snapshot& snapshot, int width, int height) {
+    [[maybe_unused]] Display* display = static_cast<Display*>(displayPtr);
     const auto now = std::chrono::steady_clock::now();
     if (now < nextSilent_) return false;
 
@@ -545,15 +579,22 @@ bool Features::silentStep(void* displayPtr, const Config& config, const Snapshot
     const PlayerInfo* best = nullptr;
     bool bestVisible = false;
     float bestMetric = 0.f;
+    int rejected = 0;
     for (const PlayerInfo& player : snapshot.players) {
         if (player.health <= 0) continue;
-        if (config.silent.teamCheck && player.team == snapshot.localTeam) continue;
-        if (config.silent.maxDistance > 0.f && player.distance > config.silent.maxDistance) continue;
+        if (silent.teamCheck && player.team == snapshot.localTeam) continue;
+        if (silent.maxDistance > 0.f && player.distance > silent.maxDistance) continue;
 
-        const float dx = player.headScreen.x - centerX;
-        const float dy = player.headScreen.y - centerY;
+        // 投影退化的目标会把准星甩到几千像素外：只接受屏幕矩形内的候选。
+        Vec2 delta{};
+        if (!screenDelta(player.headScreen, width, height, delta)) {
+            ++rejected;
+            continue;
+        }
+        const float dx = delta.x;
+        const float dy = delta.y;
         const float distance = std::sqrt(dx * dx + dy * dy);
-        if (config.silent.fovPixels > 0.f && distance >= config.silent.fovPixels) continue;
+        if (silent.fovPixels > 0.f && distance >= silent.fovPixels) continue;
 
         const bool visible = player.visible;
         bool better = best == nullptr;
@@ -564,43 +605,56 @@ bool Features::silentStep(void* displayPtr, const Config& config, const Snapshot
         bestVisible = visible;
         bestMetric = distance;
     }
-    if (!best) return false;
+    if (!best) {
+        if (++debugAimTick_ % 200 == 0) {
+            trace("[silent] no on-screen target players=%zu rejected=%d\n",
+                  snapshot.players.size(), rejected);
+        }
+        return false;
+    }
 
     // 相对位移直接对齐屏幕像素：鼠标移动 N 像素，准星就移动 N 像素，
     // 不需要灵敏度系数。贴头后立刻合成点击，等游戏过一个 tick 再归位，
     // 归位后玩家的准星回到原位，看起来只是闪了一下。
     const int offsetX = static_cast<int>(std::lround(best->headScreen.x - centerX));
     const int offsetY = static_cast<int>(std::lround(best->headScreen.y - centerY));
+    // 双保险：位移绝不超过半屏。实机出现过的 (1938,-4260) 会让准星飞出画面。
+    const int limitX = width / 2;
+    const int limitY = height / 2;
+    if (offsetX > limitX || offsetX < -limitX || offsetY > limitY || offsetY < -limitY) {
+        return false;
+    }
     if (offsetX != 0 || offsetY != 0) {
-        XTestFakeRelativeMotionEvent(display, offsetX, offsetY, CurrentTime);
-        XFlush(display);
-        // 让 X 先把移动投递给游戏，再按下左键，避免点击发生在旧坐标上。
+        emitMove(displayPtr, offsetX, offsetY);
+        // 投递后再按下左键，避免点击发生在旧坐标上。
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 
-    XTestFakeButtonEvent(display, 1, True, CurrentTime);
-    XFlush(display);
-    std::this_thread::sleep_for(std::chrono::milliseconds(std::max(1, config.silent.holdMs)));
-    XTestFakeButtonEvent(display, 1, False, CurrentTime);
-    XFlush(display);
+    emitButton(displayPtr, 1, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(std::max(1, silent.holdMs)));
+    emitButton(displayPtr, 1, false);
 
     if (offsetX != 0 || offsetY != 0) {
-        XTestFakeRelativeMotionEvent(display, -offsetX, -offsetY, CurrentTime);
-        XFlush(display);
+        emitMove(displayPtr, -offsetX, -offsetY);
     }
 
     nextSilent_ = std::chrono::steady_clock::now() +
-                  std::chrono::milliseconds(std::max(1, config.silent.cooldownMs));
+                  std::chrono::milliseconds(std::max(1, silent.cooldownMs));
     if (++debugAimTick_ % 50 == 0) {
         trace("[silent] target idx=%d offset=(%d,%d) hold=%dms\n", best->index, offsetX, offsetY,
-              config.silent.holdMs);
+              silent.holdMs);
     }
     return true;
 }
 
+bool Features::silentStep(void* displayPtr, const Config& config, const Snapshot& snapshot,
+                          int width, int height) {
+    return silentStepWith(displayPtr, config.silent, snapshot, width, height);
+}
+
 void Features::recoilStep(void* displayPtr, const Config& config, const Snapshot& snapshot,
                           int height) {
-    Display* display = static_cast<Display*>(displayPtr);
+    [[maybe_unused]] Display* display = static_cast<Display*>(displayPtr);
     const float punchX = snapshot.aimPunch.x;
     const float punchY = snapshot.aimPunch.y;
     const float limit = std::max(1.f, config.recoil.maxDegrees);
@@ -625,8 +679,7 @@ void Features::recoilStep(void* displayPtr, const Config& config, const Snapshot
     const int moveY = static_cast<int>(std::lround(deltaX * k));
     if (moveX == 0 && moveY == 0) return;
 
-    XTestFakeRelativeMotionEvent(display, moveX, moveY, CurrentTime);
-    XFlush(display);
+    emitMove(displayPtr, moveX, moveY);
 }
 
 }  // namespace wv

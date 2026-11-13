@@ -98,7 +98,15 @@ bool Memory::attach(const std::string& exeName) {
     }
 
     const std::string memPath = "/proc/" + std::to_string(pid_) + "/mem";
-    memFd_ = ::open(memPath.c_str(), O_RDONLY | O_CLOEXEC);
+    // 优先 O_RDWR：同一 fd 既能 pread 也能 pwrite，直接内存功能才可用。
+    // 权限只允许只读时退回 O_RDONLY，采集/绘制链路不受影响，只是写入被拒绝。
+    writable_ = false;
+    memFd_ = ::open(memPath.c_str(), O_RDWR | O_CLOEXEC);
+    if (memFd_ >= 0) {
+        writable_ = true;
+    } else {
+        memFd_ = ::open(memPath.c_str(), O_RDONLY | O_CLOEXEC);
+    }
     if (memFd_ < 0) {
         const int saved = errno;
         error_ = "打开 " + memPath + " 失败: " + std::strerror(saved);
@@ -118,6 +126,7 @@ void Memory::detach() {
         ::close(memFd_);
         memFd_ = -1;
     }
+    writable_ = false;
     pid_ = 0;
 }
 
@@ -130,6 +139,20 @@ bool Memory::readBytes(std::uintptr_t address, void* out, std::size_t size) cons
         const ssize_t n = ::pread64(memFd_, bytes + done, size - done,
                                     static_cast<off64_t>(address + done));
         if (n <= 0) return false;  // 跨入不可读页
+        done += static_cast<std::size_t>(n);
+    }
+    return true;
+}
+
+bool Memory::writeBytes(std::uintptr_t address, const void* data, std::size_t size) const {
+    if (memFd_ < 0 || !writable_ || !data || size == 0) return false;
+
+    std::size_t done = 0;
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    while (done < size) {
+        const ssize_t n = ::pwrite64(memFd_, bytes + done, size - done,
+                                     static_cast<off64_t>(address + done));
+        if (n <= 0) return false;  // 跨入不可写页，不部分接受
         done += static_cast<std::size_t>(n);
     }
     return true;

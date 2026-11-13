@@ -33,6 +33,11 @@ struct Snapshot {
     // 后坐力角度（度）：x = pitch，y = yaw；无偏移或未开火时为零向量。
     Vec2 aimPunch{};
     int crosshairIndex{-1};
+    // 直接内存引擎写入的基址：本地 pawn 与 punch 服务对象。
+    // 随快照发布，避免引擎线程跨线程访问 Game 内部状态。
+    std::uintptr_t localPawn{0};
+    std::uintptr_t localScene{0};  // CGameSceneNode：m_angRotation 的基址
+    std::uintptr_t punchServices{0};
     std::vector<PlayerInfo> players;
 };
 
@@ -64,8 +69,23 @@ public:
     int pid() const { return memory_.pid(); }
     std::string status() const;
 
-private:
+    // 直接内存通道：与采集共用同一个 fd，pread/pwrite 都带显式偏移，线程安全。
+    bool writable() const { return memory_.writable(); }
+    bool writeBytes(std::uintptr_t address, const void* data, std::size_t size) const {
+        return memory_.writeBytes(address, data, size);
+    }
+    template <typename T>
+    bool write(std::uintptr_t address, const T& value) const {
+        return memory_.write(address, value);
+    }
+    template <typename T>
+    T read(std::uintptr_t address, T fallback = T{}) const {
+        return memory_.read<T>(address, fallback);
+    }
+    // 模块基址：引擎解析实体列表、定位 VData 链时需要。
     std::uintptr_t clientBase() const;
+
+private:
     Vec3 bonePosition(std::uintptr_t sceneNode, int boneIndex) const;
     void resolveOffsets();
     void publish(const Snapshot& snapshot);

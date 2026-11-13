@@ -146,38 +146,41 @@ void Overlay::tick() {
             state_.gameWindow.store(0);
             windowWidth_ = 0;
             if (isVisible()) hide();
-            return;
+        } else {
+            gameWindow_ = found;
+            const Window window = static_cast<Window>(found);
+
+            XWindowAttributes attributes{};
+            if (!XGetWindowAttributes(display, window, &attributes) ||
+                attributes.map_state != IsViewable || attributes.width < 64 ||
+                attributes.height < 64) {
+                state_.gameWindow.store(0);
+                windowWidth_ = 0;
+                if (isVisible()) hide();
+            } else {
+                int absoluteX = 0;
+                int absoluteY = 0;
+                Window child = 0;
+                XTranslateCoordinates(display, window, static_cast<Window>(rootWindow_), 0, 0,
+                                      &absoluteX, &absoluteY, &child);
+
+                const QRect target(absoluteX, absoluteY, attributes.width, attributes.height);
+                if (geometry() != target) setGeometry(target);
+
+                windowWidth_ = attributes.width;
+                windowHeight_ = attributes.height;
+                state_.gameWindow.store(found);
+                if (!isVisible()) show();
+            }
         }
-
-        gameWindow_ = found;
-        const Window window = static_cast<Window>(found);
-
-        XWindowAttributes attributes{};
-        if (!XGetWindowAttributes(display, window, &attributes) ||
-            attributes.map_state != IsViewable || attributes.width < 64 ||
-            attributes.height < 64) {
-            state_.gameWindow.store(0);
-            windowWidth_ = 0;
-            if (isVisible()) hide();
-            return;
-        }
-
-        int absoluteX = 0;
-        int absoluteY = 0;
-        Window child = 0;
-        XTranslateCoordinates(display, window, static_cast<Window>(rootWindow_), 0, 0, &absoluteX,
-                              &absoluteY, &child);
-
-        const QRect target(absoluteX, absoluteY, attributes.width, attributes.height);
-        if (geometry() != target) setGeometry(target);
-
-        windowWidth_ = attributes.width;
-        windowHeight_ = attributes.height;
-        state_.gameWindow.store(found);
-        if (!isVisible()) show();
     }
 
-    game_.update(Vec2{0.f, 0.f}, windowWidth_, windowHeight_);
+    // 采样必须与窗口几何解耦：直接内存引擎只消费世界坐标与运行时指针，
+    // 窗口探测失败（独占全屏 / Wayland / 未映射）时若在这里 return，Snapshot
+    // 会永远 invalid，五组内存功能一起静默失效。没窗口时用名义尺寸投影即可。
+    game_.update(Vec2{0.f, 0.f}, windowWidth_ > 0 ? windowWidth_ : 1920,
+                 windowHeight_ > 0 ? windowHeight_ : 1080);
+    if (windowWidth_ == 0) return;
 
     // 诊断开关：WV_DEBUG=1 时每 60 tick 输出一次采集/绘制状态。
     if (kDebugTrace && ++traceTick_ % 60 == 0) {
@@ -524,6 +527,53 @@ void Overlay::paintEvent(QPaintEvent* /*event*/) {
     state_.espDrawn.store(drawnCount_);
     state_.espTeamFiltered.store(teamFiltered);
     state_.espDistanceFiltered.store(distanceFiltered);
+
+    // ---- 战绩 HUD：本局命中 / 伤害 / 击杀直接画在叠加层，位置五档可选 ----
+    // 标签走 ASCII：叠加层字体是 DejaVu Sans Mono，中文字形回退会让读数错位。
+    if (config->esp.statsHud) {
+        const float cardWidth = 158.f;
+        const float cardHeight = 64.f;
+        const float margin = 26.f;
+        float left = (static_cast<float>(width()) - cardWidth) * 0.5f;
+        float top = static_cast<float>(height()) - cardHeight - 120.f;
+        switch (config->esp.statsHudPos) {
+            case 1:  // 左上
+                left = margin;
+                top = 120.f;
+                break;
+            case 2:  // 右上
+                left = static_cast<float>(width()) - cardWidth - margin;
+                top = 120.f;
+                break;
+            case 3:  // 左下
+                left = margin;
+                top = static_cast<float>(height()) - cardHeight - 120.f;
+                break;
+            case 4:  // 右下
+                left = static_cast<float>(width()) - cardWidth - margin;
+                top = static_cast<float>(height()) - cardHeight - 120.f;
+                break;
+            default:  // 0 = 底部居中，上面已给初值
+                break;
+        }
+        const QRectF card(left, top, cardWidth, cardHeight);
+        painter.setPen(QPen(QColor(255, 255, 255, 40), 1.0));
+        painter.setBrush(QColor(12, 14, 18, 150));
+        painter.drawRoundedRect(card, 6.0, 6.0);
+        painter.setBrush(Qt::NoBrush);
+
+        painter.setPen(QColor(150, 166, 175, 220));
+        painter.drawText(card.adjusted(12., 5., -12., -6.), Qt::AlignTop | Qt::AlignLeft,
+                         QStringLiteral("STATS"));
+        painter.setPen(QColor(235, 235, 235, 235));
+        painter.drawText(card.adjusted(12., 22., -12., -4.), Qt::AlignTop | Qt::AlignLeft,
+                         QString("HIT %1  DMG %2")
+                             .arg(state_.espHits.load())
+                             .arg(state_.espDamage.load()));
+        painter.setPen(QColor(230, 162, 60, 235));
+        painter.drawText(card.adjusted(12., 41., -12., -2.), Qt::AlignTop | Qt::AlignLeft,
+                         QString("KILL %1").arg(state_.espKills.load()));
+    }
 
     // ---- 屏外指示：视野外的敌人在屏幕边缘画箭头指向真实方位 ----
     if (config->esp.offscreen) {

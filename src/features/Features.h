@@ -4,6 +4,7 @@
 #include <thread>
 
 #include "core/Config.h"
+#include "core/UInput.h"
 #include "game/Game.h"
 
 namespace wv {
@@ -18,6 +19,11 @@ public:
     void start();
     void stop();
 
+    // 统一按键判定：0 = 不限，1..5 = 鼠标 Button1..5，>5 = X11 keysym（键盘）。
+    // 键盘走 XQueryKeymap 轮询，不抓键，游戏侧输入不受影响。
+    // 公开给同层的 MemoryEngine 复用，避免两套轮询逻辑漂移。
+    static bool keyDown(void* display, int code);
+
 private:
     void run();
     void aimStep(void* display, const Config& config, const Snapshot& snapshot, int width,
@@ -29,15 +35,20 @@ private:
     // 静默锁头：贴头 → 合成点击 → 归位。return true 表示本帧已由静默锁头接管。
     bool silentStep(void* display, const Config& config, const Snapshot& snapshot, int width,
                     int height);
+    // 与上同逻辑，但参数由调用方给定：真子弹追踪用它把 MemoryConfig 映射到
+    // XTest 命中路径，不依赖 silent.* 开关。
+    bool silentStepWith(void* display, const SilentConfig& silent, const Snapshot& snapshot,
+                        int width, int height);
     void recoilStep(void* display, const Config& config, const Snapshot& snapshot, int height);
 
     static bool gameActive(void* display, std::uintptr_t gameWindow, int pid);
-    // 统一按键判定：0 = 不限，1..5 = 鼠标 Button1..5，>5 = X11 keysym（键盘）。
-    // 键盘走 XQueryKeymap 轮询，不抓键，游戏侧输入不受影响。
-    static bool keyDown(void* display, int code);
+    // 输入合成统一入口：优先常驻 uinput 虚拟鼠标，失败才回退 XTest。
+    void emitMove(void* display, int dx, int dy);
+    void emitButton(void* display, int button, bool down);
 
     Game& game_;
     AppState& state_;
+    UInput uinput_;
     std::thread thread_;
     std::atomic_bool running_{false};
     std::chrono::steady_clock::time_point nextTrigger_{};
@@ -49,6 +60,7 @@ private:
     unsigned int lastMask_{0};  // 上一次指针按键掩码，用于记录物理键位变化
     bool lastTogglePanel_{false};  // F8 的上一帧状态，用来取按下沿
     bool lastPanic_{false};        // F9 的上一帧状态
+    bool lastResetStats_{false};   // F10 的上一帧状态
 };
 
 }  // namespace wv

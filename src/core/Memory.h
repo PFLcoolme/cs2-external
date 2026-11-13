@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -44,6 +45,15 @@ public:
 
     bool readBytes(std::uintptr_t address, void* out, std::size_t size) const;
 
+    // 直接写目标地址空间（pwrite64）。fd 以 O_RDWR 打开时可用；
+    // 只读回退（权限不足）时 writable() 为假，所有写入被拒绝。
+    bool writeBytes(std::uintptr_t address, const void* data, std::size_t size) const;
+    template <typename T>
+    bool write(std::uintptr_t address, const T& value) const {
+        return writeBytes(address, &value, sizeof(T));
+    }
+    bool writable() const noexcept { return writable_.load(); }
+
     std::uintptr_t moduleBase(const std::string& moduleName) const;
     std::size_t moduleSize(const std::string& moduleName) const;
 
@@ -66,6 +76,8 @@ private:
 
     int pid_{0};
     int memFd_{-1};
+    // attach/detach 在主线程，引擎线程每 2 ms 读一次，必须原子。
+    std::atomic_bool writable_{false};
     std::string error_;
 };
 

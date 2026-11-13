@@ -42,7 +42,21 @@ inline bool worldToScreen(const Vec3& world, const Mat4& view, const Vec2& origi
 
     out.x = origin.x + (static_cast<float>(width) * 0.5f) * (1.f + x / w);
     out.y = origin.y + (static_cast<float>(height) * 0.5f) * (1.f - y / w);
+    // w 接近 0 时 x/w 会溢出成 NaN/inf，防御性拒绝，别把垃圾坐标带进快照。
+    if (!std::isfinite(out.x) || !std::isfinite(out.y)) return false;
     return true;
+}
+
+// 相对屏幕中心的像素偏移。实机日志出现过 headScreen 投影退化到 (1938,-4260)，
+// XTest 按它移动会把准星甩飞再归位，表现为视角剧烈抖动、打不中。
+// 只接受落在屏幕矩形内的目标，非有限值直接拒绝。
+inline bool screenDelta(const Vec2& head, int width, int height, Vec2& delta) {
+    const float halfW = static_cast<float>(width) * 0.5f;
+    const float halfH = static_cast<float>(height) * 0.5f;
+    delta.x = head.x - halfW;
+    delta.y = head.y - halfH;
+    if (!std::isfinite(delta.x) || !std::isfinite(delta.y)) return false;
+    return std::fabs(delta.x) <= halfW && std::fabs(delta.y) <= halfH;
 }
 
 // 从视图矩阵左上 3x3 推导相机朝向角（世界系 yaw，弧度）。
@@ -62,6 +76,19 @@ inline float viewYaw(const Mat4& view) {
         return std::numeric_limits<float>::quiet_NaN();
     }
     return std::atan2(fy, fx);
+}
+
+// from → to 的 Source 角度（度）：x = pitch，y = yaw，与 Snapshot::aimPunch 同序。
+// Source 约定：yaw = atan2(dy, dx)；向上看为负 pitch，故对 dz 取负。
+// 水平距离退化（正上/正下方）时保留 yaw = 0，不产生 NaN。
+inline Vec2 aimAngles(const Vec3& from, const Vec3& to) {
+    constexpr float kRadToDeg = 57.29577951308232f;
+    const Vec3 d = to - from;
+    const float horizontal = std::sqrt(d.x * d.x + d.y * d.y);
+    Vec2 angles{};
+    angles.y = std::atan2(d.y, d.x) * kRadToDeg;
+    angles.x = -std::atan2(d.z, horizontal) * kRadToDeg;
+    return angles;
 }
 
 // 目标相对屏幕中心的方向（单位向量），用于屏幕外指示。

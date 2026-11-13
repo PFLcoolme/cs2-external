@@ -14,9 +14,11 @@ add_executable(cs2_lite
     src/core/Memory.cpp
     src/core/Config.cpp
     src/core/OffsetsImporter.cpp
+    src/core/UInput.cpp
     src/game/Game.cpp
     src/render/Overlay.cpp
     src/features/Features.cpp
+    src/features/MemoryEngine.cpp
     src/ui/Menu.cpp
 )
 
@@ -33,12 +35,13 @@ target_link_libraries(cs2_lite PRIVATE
 
 target_compile_options(cs2_lite PRIVATE -Wall -Wextra -Wpedantic)
 
-# 首次构建时把默认配置放到可执行文件旁边
-add_custom_command(TARGET cs2_lite POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_CURRENT_SOURCE_DIR}/config/default.json
-            $<TARGET_FILE_DIR:cs2_lite>/config.json
-)
+# 默认配置只在配置期生成一次。原 POST_BUILD 的 copy_if_different 会在
+# default.json 每次变更后覆盖 build/config.json，把面板保存的开关与实机偏移清零，
+# 表现为「功能突然全用不了」。已有文件一律不动，交给热重载与偏移生成器更新。
+if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/config.json)
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config/default.json
+                   ${CMAKE_CURRENT_BINARY_DIR}/config.json COPYONLY)
+endif()
 
 # 生成器产出的偏移文件跟随可执行文件，使 config.json 里 offsetsFile 的相对路径
 # （config/offsets.json）无论从仓库根目录还是 build/ 启动都能解析到。

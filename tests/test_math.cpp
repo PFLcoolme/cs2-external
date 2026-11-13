@@ -2,6 +2,7 @@
 #include "test_util.h"
 
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -87,10 +88,55 @@ void testScreenDirection() {
     EXPECT(!wv::screenDirection({0.f, 0.f, 0.f}, flat, dx, dy));
 }
 
+void testAimAngles() {
+    // 同高度正 X：yaw 0 / pitch 0。
+    wv::Vec2 a = wv::aimAngles({0.f, 0.f, 0.f}, {100.f, 0.f, 0.f});
+    EXPECT_NEAR(a.x, 0.f, 0.01f);
+    EXPECT_NEAR(a.y, 0.f, 0.01f);
+
+    // 正 Y：yaw 90。
+    a = wv::aimAngles({0.f, 0.f, 0.f}, {0.f, 100.f, 0.f});
+    EXPECT_NEAR(a.x, 0.f, 0.01f);
+    EXPECT_NEAR(a.y, 90.f, 0.01f);
+
+    // 抬头 45°：Source 约定向上为负 pitch，yaw 不变。
+    a = wv::aimAngles({0.f, 0.f, 0.f}, {100.f, 0.f, 100.f});
+    EXPECT_NEAR(a.x, -45.f, 0.01f);
+    EXPECT_NEAR(a.y, 0.f, 0.01f);
+
+    // 水平距离退化（正上方）：atan2 仍有限，不产生 NaN。
+    a = wv::aimAngles({0.f, 0.f, 0.f}, {0.f, 0.f, 100.f});
+    EXPECT(std::isfinite(a.x));
+    EXPECT(std::isfinite(a.y));
+    EXPECT_NEAR(a.x, -90.f, 0.01f);
+}
+
+void testScreenDelta() {
+    wv::Vec2 d{};
+    // 屏幕中心 → 零偏移。
+    EXPECT(wv::screenDelta({960.f, 540.f}, 1920, 1080, d));
+    EXPECT_NEAR(d.x, 0.f, 0.01f);
+    EXPECT_NEAR(d.y, 0.f, 0.01f);
+
+    // 屏幕内左上角。
+    EXPECT(wv::screenDelta({10.f, 10.f}, 1920, 1080, d));
+    EXPECT_NEAR(d.x, -950.f, 0.01f);
+    EXPECT_NEAR(d.y, -530.f, 0.01f);
+
+    // 实机日志 [silent] offset=(1938,-4260) 对应的投影退化坐标必须被拒绝。
+    EXPECT(!wv::screenDelta({1938.f, -4260.f}, 1920, 1080, d));
+    // 屏幕边界仍接受。
+    EXPECT(wv::screenDelta({1920.f, 1080.f}, 1920, 1080, d));
+    // 非有限值拒绝。
+    EXPECT(!wv::screenDelta({std::numeric_limits<float>::quiet_NaN(), 0.f}, 1920, 1080, d));
+}
+
 }  // namespace
 
 void runMathTests() {
     testWorldToScreen();
     testViewYaw();
     testScreenDirection();
+    testAimAngles();
+    testScreenDelta();
 }

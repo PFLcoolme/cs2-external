@@ -66,6 +66,57 @@ struct TriggerConfig {
     bool teamCheck{true};
 };
 
+// 直接内存写入的五组功能。全部默认关闭；任一偏移未配置时对应功能静默跳过。
+// 与 XTest 路径的区别：这里改的是游戏进程里的字段，不移动准星、不合成输入。
+struct MemoryConfig {
+    // 加速：写 m_flVelocityModifier 倍率（幂等）。该偏移未配置时功能跳过并计入缺项。
+    bool speed{false};
+    float speedFactor{1.5f};
+
+    // 子弹追踪内存锁：不看准星、不看按键、不看 FOV，每帧把射击结算角
+    // (m_angEyeAngles + m_angStashedShootAngles) 强制锁到最近敌人头部。
+    // 本地相机角 v_angle 全程不写，视角与准星纹丝不动。
+    // 清 m_angEyeAnglesVelocity / m_arrOldEyeAngles 防止游戏用历史角回滚。
+    bool bulletTrack{false};
+    int bulletTrackKey{0};           // 0 = 常驻锁（默认）；>0 时才要求该键按住
+    float bulletTrackMaxDistance{0.f};  // 0 = 不限（米）
+    bool bulletTrackTeamCheck{true};
+    int bulletLockHoldMs{300};       // 目标暂时消失后继续锁住上一帧角度的时长
+    // 写 m_angEyeAngles 会联动 v_angle（实机同源）。每帧把 v_angle 写回玩家
+    // 真实相机角，压住联动 → 视角纹丝不动，同时射击角仍锁在目标上。
+    bool bulletLockProtectView{true};
+    // 命中优先：把 v_angle 一起写成锁定角，让下一条 usercmd 视角与射击角一致，
+    // 服务器才会按锁定方向结算。代价是相机跟着目标转（视角会动）。
+    // 关着 = 视角不动，但服务器可能按玩家真实朝向判 miss →「打中没伤害」。
+    bool bulletLockSyncView{false};
+
+    // 飞天：按住上升键写 m_vecVelocity.z，可选同时切 m_MoveType。
+    bool fly{false};
+    int flyUpKey{0x20};              // XK_space
+    int flyDownKey{0};               // 0 = 不启用下降
+    float flySpeed{250.f};           // Source 单位/秒
+    int flyMoveType{0};              // 0 = 只改垂直速度；>0 时写入 m_MoveType 的值
+
+    // 身体旋转：只写 m_angRotation 的 yaw，相机角与射击角都不动。
+    bool spin{false};
+    float spinDegreesPerSec{180.f};
+    // m_angAbsRotation 是渲染用的世界旋转，写它会带动画面（视角一直在动）。
+    // 默认只写 m_angRotation（模型本地旋转），保证视角不变。
+    bool spinKeepView{true};
+
+    // 真无后坐力：直接把 punch 角度写零，比 XTest 反向补偿更彻底。
+    bool noRecoil{false};
+    // 弹着点收成一点。安全模式（默认开）只清两个纯视模动画字段：
+    // m_flFlinchStack（受击抖动）与 m_flLastShakeTime（枪口抖动时间戳）。
+    bool accuracy{false};
+    // 关掉安全模式才会清散布预测组：m_flInterpolatedInaccuracy、
+    // m_vClientScopeInaccuracy、m_iShotsFired、m_fAccuracyPenalty、
+    // m_fAccuracySmoothedForZoom、m_flTurningInaccuracy(+Delta)、后坐力索引。
+    // 这些是客户端算散布的输入，清掉 = 本地预测以为必中、服务器按真实散布
+    // 判 miss，表现正是「打中却没伤害」。默认必须保持开启。
+    bool accuracySafeMode{true};
+};
+
 struct EspConfig {
     bool enabled{true};
     bool box{true};
@@ -83,6 +134,9 @@ struct EspConfig {
     int enemyListMax{5};     // 列表最多显示行数
     bool heightIndicator{false};  // 目标与本地的高度差（▲ 楼上 / ▼ 楼下）
     bool crosshairInfo{false};    // 准星指向的敌人：在准星旁显示血量与距离
+    // 战绩 HUD：把本局命中 / 伤害 / 击杀直接画在叠加层上，配合 resetStatsKey 清零。
+    bool statsHud{false};
+    int statsHudPos{1};  // 复用下面的 HUD 位置编码，默认左上
     // HUD 位置：0 底部居中 / 1 左上 / 2 右上 / 3 左下 / 4 右下
     int radarPos{0};
     int listPos{2};
@@ -103,14 +157,16 @@ struct Config {
     std::string offsetsFile;
     std::string offsetsSource{"config.json 内嵌"};
     Offsets offsets;
-    // 全局快捷键（X11 keysym）：F8 显隐面板、F9 一键静默。面板可录制改键。
+    // 全局快捷键（X11 keysym）：F8 显隐面板、F9 一键静默、F10 清零战绩。面板可录制改键。
     int togglePanelKey{0xFFC5};
     int panicKey{0xFFC6};
+    int resetStatsKey{0xFFC7};
     AimbotConfig aim;
     RecoilConfig recoil;
     TrackConfig track;
     SilentConfig silent;
     TriggerConfig trigger;
+    MemoryConfig memory;
     EspConfig esp;
 
     static Config load(const std::string& path);
@@ -138,9 +194,17 @@ struct AppState {
 
     // 1 = 请求切换面板显隐（Features 线程检测热键，主线程消费后清零）。
     std::atomic<int> panelToggle{0};
+    // 1 = 请求把命中 / 伤害 / 击杀计数清零（Features 置位，面板消费后清零）。
+    std::atomic<int> statsReset{0};
 
-    // 1 = Panic 模式：叠加层不绘制、所有输入合成停止。按 F9 切换。
+    // 1 = Panic 模式：叠加层不绘制、所有输入合成与内存写入停止。按 F9 切换。
     std::atomic<int> panicMode{0};
+
+    // 直接内存引擎状态：writable = /proc/<pid>/mem 以 O_RDWR 打开；
+    // missing = 本次采样发现的缺失偏移项数；writes = 累计成功写入次数。
+    std::atomic<int> memoryWritable{0};
+    std::atomic<int> memoryMissing{0};
+    std::atomic<int> memoryWrites{0};
 };
 
 }  // namespace wv

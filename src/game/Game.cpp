@@ -175,10 +175,12 @@ void Game::update(const Vec2& screenOrigin, int width, int height) {
         publish(snap);
         return;
     }
+    snap.localPawn = localPawn;
 
     const std::uintptr_t localScene =
         memory_.read<std::uintptr_t>(localPawn + offsets_.m_pGameSceneNode);
     if (localScene != 0) {
+        snap.localScene = localScene;
         snap.localOrigin = memory_.read<Vec3>(localScene + offsets_.m_vecAbsOrigin);
     }
     snap.localTeam = memory_.read<int>(localPawn + offsets_.m_iTeamNum, 0);
@@ -189,6 +191,7 @@ void Game::update(const Vec2& screenOrigin, int width, int height) {
         const std::uintptr_t punchServices = memory_.read<std::uintptr_t>(
             localPawn + static_cast<std::uintptr_t>(offsets_.m_pAimPunchServices));
         if (punchServices != 0) {
+            snap.punchServices = punchServices;
             snap.aimPunch = memory_.read<Vec2>(
                 punchServices + static_cast<std::uintptr_t>(offsets_.m_aimPunchAngle));
         }
