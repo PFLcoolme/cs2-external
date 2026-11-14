@@ -10,9 +10,9 @@
 
 namespace wv {
 
-// 直接内存引擎：独立工作线程，按配置把五组功能写进游戏进程。
-// 与 Features（XTest 输入合成）完全解耦：这里一个鼠标事件都不发，
-// 准星、相机角、玩家输入都不动，改的只是 pawn 上的网络字段。
+// 直接内存引擎：独立工作线程，按配置把六组功能写进游戏进程。
+// 与 Features 的输入合成解耦：这里不发送鼠标事件；是否修改相机角由
+// bulletLockProtectView / bulletLockSyncView 与 spinKeepView 显式控制。
 //
 // 写入前置条件：/proc/<pid>/mem 以 O_RDWR 打开，且该功能的偏移已配置。
 // 任一条件不满足就静默跳过并在 AppState::memoryMissing 里计数，不猜测布局。

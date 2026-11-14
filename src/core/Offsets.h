@@ -9,7 +9,7 @@ namespace wv {
 struct Offsets {
     // 特征码：命中位置假定为 `mov/lea reg, [rip+disp32]`，
     // 解析规则 target = 命中地址 + 7 + disp32。
-    // 特征码非空时优先于下面的静态偏移。
+    // 对应 dw* 为 0 时才扫描：优先使用这里的自定义特征码，否则使用 Patterns.h 常量。
     std::string sigEntityList;
     std::string sigLocalPlayerPawn;
     std::string sigViewMatrix;

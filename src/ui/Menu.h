@@ -134,7 +134,7 @@ private:
     KeyBindButton* resetStatsKey_{nullptr};
     QPushButton* resetStatsButton_{nullptr};
 
-    // 页四：直接内存功能（五组开关与参数）。
+    // 页四：直接内存功能（六组开关与参数）。
     QCheckBox* memSpeed_{nullptr};
     QDoubleSpinBox* memSpeedFactor_{nullptr};
     QCheckBox* memBulletTrack_{nullptr};

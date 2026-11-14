@@ -66,17 +66,17 @@ struct TriggerConfig {
     bool teamCheck{true};
 };
 
-// 直接内存写入的五组功能。全部默认关闭；任一偏移未配置时对应功能静默跳过。
-// 与 XTest 路径的区别：这里改的是游戏进程里的字段，不移动准星、不合成输入。
+// 直接内存写入的六组功能。全部默认关闭；任一偏移未配置时对应功能跳过并计数。
+// 与输入合成路径的区别：这里改的是游戏进程里的字段，不合成鼠标事件。
 struct MemoryConfig {
     // 加速：写 m_flVelocityModifier 倍率（幂等）。该偏移未配置时功能跳过并计入缺项。
     bool speed{false};
     float speedFactor{1.5f};
 
-    // 子弹追踪内存锁：不看准星、不看按键、不看 FOV，每帧把射击结算角
-    // (m_angEyeAngles + m_angStashedShootAngles) 强制锁到最近敌人头部。
-    // 本地相机角 v_angle 全程不写，视角与准星纹丝不动。
+    // 子弹追踪内存锁：不看准星与 FOV，按 bulletTrackKey / 距离 / 队伍条件选靶，
+    // 把射击结算角 (m_angEyeAngles + m_angStashedShootAngles) 锁到目标头部。
     // 清 m_angEyeAnglesVelocity / m_arrOldEyeAngles 防止游戏用历史角回滚。
+    // v_angle 由 bulletLockProtectView / bulletLockSyncView 决定保护还是同步。
     bool bulletTrack{false};
     int bulletTrackKey{0};           // 0 = 常驻锁（默认）；>0 时才要求该键按住
     float bulletTrackMaxDistance{0.f};  // 0 = 不限（米）

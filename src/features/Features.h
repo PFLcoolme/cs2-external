@@ -9,8 +9,8 @@
 
 namespace wv {
 
-// 自瞄与扳机：全部输入通过 XTest 扩展合成，不注入游戏进程。
-// 参考：XTestFakeRelativeMotionEvent / XTestFakeButtonEvent / XQueryPointer
+// 自瞄与扳机：优先通过 /dev/uinput 常驻虚拟鼠标合成输入，失败时回退 XTest。
+// 键盘与鼠标状态通过 X11 轮询；不注入游戏进程。
 class Features {
 public:
     Features(Game& game, AppState& state);
@@ -35,8 +35,7 @@ private:
     // 静默锁头：贴头 → 合成点击 → 归位。return true 表示本帧已由静默锁头接管。
     bool silentStep(void* display, const Config& config, const Snapshot& snapshot, int width,
                     int height);
-    // 与上同逻辑，但参数由调用方给定：真子弹追踪用它把 MemoryConfig 映射到
-    // XTest 命中路径，不依赖 silent.* 开关。
+    // 与上同逻辑，但参数由调用方给定，供静默锁头复用选靶与输入流程。
     bool silentStepWith(void* display, const SilentConfig& silent, const Snapshot& snapshot,
                         int width, int height);
     void recoilStep(void* display, const Config& config, const Snapshot& snapshot, int height);

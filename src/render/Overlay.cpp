@@ -136,7 +136,7 @@ void Overlay::tick() {
         return;
     }
 
-    // 窗口几何低频探测（每 10 tick ≈ 30ms）：XGetWindowAttributes / XTranslateCoordinates
+    // 窗口几何低频探测（每 10 tick ≈ 50ms）：XGetWindowAttributes / XTranslateCoordinates
     // 都是同步往返请求，每帧执行会白吃主线程时间。
     const bool probe = windowWidth_ == 0 || ++tickCount_ % kWindowProbeTicks == 0;
     if (probe) {
@@ -177,7 +177,7 @@ void Overlay::tick() {
 
     // 采样必须与窗口几何解耦：直接内存引擎只消费世界坐标与运行时指针，
     // 窗口探测失败（独占全屏 / Wayland / 未映射）时若在这里 return，Snapshot
-    // 会永远 invalid，五组内存功能一起静默失效。没窗口时用名义尺寸投影即可。
+    // 会永远 invalid，六组内存功能一起静默失效。没窗口时用名义尺寸投影即可。
     game_.update(Vec2{0.f, 0.f}, windowWidth_ > 0 ? windowWidth_ : 1920,
                  windowHeight_ > 0 ? windowHeight_ : 1080);
     if (windowWidth_ == 0) return;
@@ -204,8 +204,8 @@ void Overlay::tick() {
         XFlush(display);
     }
 
-    // 采样保持 3ms（自瞄需要新鲜数据），重绘限速到 60Hz：整张 1920x1080 半透明表面
-    // 每次提交都昂贵，按 333Hz 重绘会吃满 CPU 并引入可见延迟。
+    // 采样保持 5ms（自瞄需要新鲜数据），重绘限速到约 30Hz：整张 1920x1080 半透明表面
+    // 每次提交都昂贵，按约 200Hz 重绘会吃满 CPU 并引入可见延迟。
     const auto now = std::chrono::steady_clock::now();
     if (now - lastPaint_ >= std::chrono::milliseconds(33)) {
         lastPaint_ = now;

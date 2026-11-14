@@ -1,412 +1,286 @@
-# CS2 外部辅助 — 项目规划文档（Linux）
+# CS2 外部辅助：当前技术方案与维护计划（Linux）
 
-## 1. 需求目标
+> 文档基线：2026-11-14，对应主分支 `v1.0` 实现。本文描述**当前代码如何工作以及后续如何维护**，不再逐阶段重复历史方案；历次决策、实机取证和失败路径见 [PHASE_LOG.md](PHASE_LOG.md)，使用说明见 [README.md](../README.md)。
+>
+> 证据口径：`代码已实现` 不等于 `对局效果已验证`；`pwrite64 成功` 不等于服务器认可；历史实测数值只适用于记录中的游戏版本。当前版本必须重新生成偏移并验证。
 
-Linux 原生 CS2 的外部（external）辅助：
+## 1. 目标与边界
 
-- 透视：方框、血量条、距离、骨骼连线，叠加在游戏画面上且不拦截鼠标。
-- 自瞄：按住指定鼠标键，按屏幕像素偏移向目标头部平滑移动。
-- 扳机：准星命中敌人时合成左键点击。
-- 控制面板：实时开关与参数调整，持久化 JSON。
+### 1.1 当前能力
 
-全程只读目标进程内存，输入通过 XTest 合成；**不注入、不 ptrace 附加调试器、不写游戏内存**。
+- ESP：方框、血量/护甲、距离、骨骼、伤害浮字、残影、雷达、屏外箭头、敌人列表、高度差、准星信息与战绩 HUD。
+- 输入功能：自瞄、输入式后坐力补偿、子弹追踪、静默锁头、自动扳机。
+- 直接内存功能：加速、子弹追踪内存锁、飞天、身体旋转、真无后坐力、弹着点控制，共六组，默认全部关闭。
+- 工程能力：Qt6 控制面板、400 ms 防抖保存、配置与偏移热重载、上一配置回滚、启动自检、诊断日志、单元测试和 CI。
 
-## 2. 技术栈
+### 1.2 明确边界
 
-| 项 | 选型 |
-|---|---|
-| 语言 | C++20（`std::atomic<std::shared_ptr<>>` 需要） |
-| 编译器 | GCC 16 / Clang 18+ |
-| GUI / 叠加层 | Qt 6 Widgets（X11 后端） |
-| 构建 | CMake ≥ 3.21 + Ninja，`AUTOMOC` |
-| 系统库 | libX11、libXext（XShape）、libXtst（XTest） |
-| JSON | Qt `QJsonDocument`，无第三方依赖 |
+- 不注入 DLL/SO，不 hook 游戏函数，不通过 `ptrace` 附加，不包含反作弊绕过。
+- 仅面向 Linux X11；Wayland 只能尝试 XWayland，原生 Wayland 的窗口与输入能力不受支持。
+- 独占全屏不保证叠加；推荐无边框窗口或全屏窗口。
+- 线上使用有封号风险。仅用于本地单机或自建环境研究。
+- 内存锁角、散布和速度等字段即使可写，也可能被客户端预测覆盖或不被服务器采用，必须用探针和对局证据分别判断。
 
-## 3. 实现方案
+## 2. 技术栈与依赖
 
-### 3.1 分层
+| 类别 | 当前选型 | 用途 |
+|---|---|---|
+| 语言 | C++20 | `std::atomic<std::shared_ptr<Config>>`、线程与标准库容器 |
+| 构建 | CMake ≥ 3.21，可选 Ninja | `AUTOMOC`，测试默认开启 |
+| GUI | Qt6 Core / Gui / Widgets | 面板、透明叠加层、JSON |
+| 窗口与输入 | X11、Xext/XShape、Xtst | 窗口定位、输入穿透、按键轮询、XTest 回退 |
+| 内核接口 | `/proc/<pid>/mem`、`/dev/uinput` | 进程读写、常驻虚拟鼠标 |
+| 脚本 | Python 3 标准库 | 偏移生成与只读/写入探针 |
+| CI | GitHub Actions，`ubuntu-24.04` | Release 构建与 `ctest` |
 
+编译器以支持 C++20 的 GCC/Clang 为准；README 中的 GCC 13+ / Clang 16+ 是使用基线，不是代码中的强制版本检查。
+
+## 3. 当前架构与线程模型
+
+![分层架构](assets/architecture.svg)
+
+| 模块 | 职责 | 不承担的职责 |
+|---|---|---|
+| `core/Memory` | 定位进程、打开 mem、模块映射、`pread64` / `pwrite64`、特征码扫描 | 不理解玩家与武器语义 |
+| `core/Config` | 默认值、JSON 读写、保留未知字段、dumper 导入 | 不扫描进程 |
+| `core/UInput` | 创建/销毁虚拟鼠标，发送相对位移和 Button1~3 | 不读取游戏状态 |
+| `game/Game` | 偏移解析、实体采集、骨骼/投影、快照与诊断 | 不直接操作 UI |
+| `render/Overlay` | 5 ms 采样调度、窗口跟随、约 30 Hz 绘制、命中统计 | 不合成输入 |
+| `features/Features` | 1 ms 输入线程、热键、选靶、UInput/XTest | 不写游戏字段 |
+| `features/MemoryEngine` | 2 ms 内存线程；锁角开启时 1 ms；恢复已缓存字段 | 不合成鼠标事件 |
+| `ui/Menu` | 五页面板、自动保存、热重载、备份、自检与日志展示 | 不在工作线程操作控件 |
+| `Main.cpp` | Xlib 线程初始化、启动刷新偏移、对象装配与退出回收 | 不实现功能逻辑 |
+
+依赖方向保持 `ui / render / features → game → core`。配置通过原子 `shared_ptr` 整体替换；`Snapshot` 和状态字符串由 mutex 保护并整份复制，不宣称快照“无锁”。任何 Xlib 调用之前先执行 `XInitThreads()`，输入线程与内存线程各自持有 X Display 连接。
+
+## 4. 进程、内存与偏移解析
+
+### 4.1 附加与读写降级
+
+1. 遍历 `/proc/*/comm` 定位 `cs2`。
+2. 优先以 `O_RDWR | O_CLOEXEC` 打开 `/proc/<pid>/mem`，失败再尝试 `O_RDONLY | O_CLOEXEC`。
+3. 用 `pread64` 读取；只有可写 fd 才允许 `pwrite64`，只读回退时内存引擎跳过功能写入。
+4. 从 `maps` 计算 `libclient.so` 基址与范围，模块基址缓存，避免每个实体重复解析。
+5. 权限受 Yama、用户和 capabilities 约束；同用户并不保证一定能读或写。
+
+### 4.2 配置与偏移优先级
+
+```text
+C++ 默认值
+  → 可执行文件旁 config.json 的 offsets 段
+  → offsetsFile 指向的扁平或 cs2-dumper 分层 JSON（同名字段覆盖）
+  → Game::resolveOffsets()
+       dw* 非零：直接采用静态 RVA，不扫描特征码
+       dw* 为零：优先 sig*；sig* 为空则使用 Patterns.h 内置特征码
 ```
-src/
-  core/     Memory(/proc 读取)  Math(Vec2/Vec3/Mat4/w2s)  Offsets  Config
-  game/     Game(实体遍历 → Snapshot)
-  render/   Overlay(X11 透明叠加窗口，QPainter)
-  features/ Features(自瞄 + 扳机工作线程，XTest)
-  ui/       Menu(Qt 控制面板)
-  Main.cpp
+
+`offsetsFile` 的相对路径按进程当前工作目录解析。CMake 会把 `config/offsets.json` 复制到可执行文件旁的 `config/`，因此从仓库根目录或 `build/` 启动通常都能解析。自定义发布目录必须保持该相对结构，或改成合适路径。
+
+导入器支持数字、`0x` 字符串和 `{"value": N}`，并按类作用域选择同名字段。不要把外部文件的静态 RVA 与来自另一游戏版本的 schema 字段混用。
+
+### 4.3 实体与骨骼
+
+- 最多遍历 2048 个槽；页大小由 `entityChunkMask + 1` 得出，默认 512。
+- 地址：`chunk = list + 0x10 + 8 * page`，`pawn = chunk + 112 * slot`。
+- 每页尝试一次读取 `512 × 112 = 57344` 字节，失败时逐槽回退。
+- 过滤死亡、非 2/3 队伍、空 scene 与非法投影；`m_lifeState` 按 `uint8` 读取。
+- 骨骼指针为 `scene + m_modelState + m_boneArray` 处保存的地址；当前配置使用 `m_modelState=448`、步长 32、坐标 `+0/+4/+8`。
+- 骨骼不可用时头部退化为原点上移 62 units；这只保证功能降级，不代表完整骨架可用。
+
+## 5. 快照、叠加层与统计
+
+### 5.1 数据流
+
+```text
+Overlay QTimer（5 ms）
+  → Game::update(origin, width, height)
+  → 模块全局 / 本地 pawn / scene / punchServices
+  → 实体页批量读取、骨骼和世界到屏幕投影
+  → mutex 内发布 Snapshot
+       ├─ Overlay：HUD 与 ESP 绘制
+       ├─ Features：目标选择与输入
+       └─ MemoryEngine：目标选择、运行时基址与字段写入
 ```
 
-### 3.2 数据获取
+- 窗口几何每 10 tick（约 50 ms）探测；每 6 tick（约 30 ms）抬升叠加窗口。
+- 采样与窗口探测解耦：窗口不可映射时仍用名义分辨率采集，内存功能不依赖画面是否成功叠加。
+- 重绘间隔 33 ms；XShape 空输入区域和 Qt 鼠标穿透共同避免挡住游戏输入。
+- 世界坐标到米使用 `1 / 39.37`；矩阵按当前 `Math.h` 的行主序投影公式处理。
+- 命中/伤害/击杀统计从血量差值推导，与“伤害浮字”显示开关解耦；F10 只清本次进程内计数，不读写游戏战绩。
 
-1. 遍历 `/proc/*/comm` 与 `/proc/*/exe` 定位 `cs2`，`open("/proc/<pid>/mem", O_RDONLY)`。
-2. `pread64` 读取任意地址；`/proc/<pid>/maps` 解析 `libclient.so` 的 `start - offset` 得模块基址，最大 `end - 最小 start` 得大小。
-3. 偏移来源（按优先级）：
-   - `offsetsFile` 指向 cs2-dumper（a2x）输出的 `offsets.json`，启动时导入；
-   - `config.json` 内嵌 `offsets` 段的静态偏移；
-   - `src/core/Patterns.h` 特征码常量 + RIP 相对寻址 `目标 = 命中地址 + 7 + disp32`（分 8MB 分块扫描，避免整模块驻留内存）。
-4. 实体列表分块：`chunk = read(list + chunkBase + ptrStride*(i>>9))`，`entity = read(chunk + 0x78*(i & 0x1FF))`。
-5. 过滤：`m_iHealth ∈ (0,100]`、`m_lifeState == 0`、`m_iTeamNum ∈ {2,3}`。
-6. 头部/骨骼：`m_pGameSceneNode` → `m_modelState` → 骨骼数组 + `bone * boneStride`（默认 `CTransform` 布局）。
-7. 投影：`dwViewMatrix` 4x4 行主序 w2s。
+## 6. 输入合成方案
 
-### 3.3 叠加层
+### 6.1 后端顺序
 
-`Qt::FramelessWindowHint | Tool | WindowStaysOnTopHint | WindowTransparentForInput | X11BypassWindowManagerHint`，`WA_TranslucentBackground`；`showEvent` 时用 `XShapeCombineRectangles(ShapeInput, 0 rect)` 清空输入区域实现点击穿透，周期性 `XRaiseWindow` 保持置顶。几何每 3ms 对齐游戏窗口客户区（`XGetWindowAttributes` + `XTranslateCoordinates`）。
+1. `Features` 启动时创建常驻 `/dev/uinput` 虚拟鼠标，发送 `EV_REL`、`EV_KEY` 和 `SYN_REPORT`。
+2. 设备不可用或单次发送失败时，回退 `XTestFakeRelativeMotionEvent` / `XTestFakeButtonEvent`。
+3. UInput 仅映射左、中、右三个按钮；设备在进程存活期间保持，给 SDL 热插拔枚举留时间。
+4. 物理鼠标状态由 `XQueryPointer` 读取；键盘 keysym 经 `XKeysymToKeycode` 后用 `XQueryKeymap` 检查，不抓取键盘。
 
-### 3.4 输入
+XTest 在采用 SDL raw input 的 CS2 环境中可能被忽略，因此它是兼容回退，不再是首选路径。日志中的 `backend=uinput` 与 `uinput_ready=1` 才可证明首选后端已就绪。
 
-- 自瞄：`XTestFakeRelativeMotionEvent`，位移 = 屏幕像素偏移 × 灵敏度系数 ÷ 平滑步数。
-- 扳机：`XTestFakeButtonEvent(1, True/False)`，按住 `delayMs` 后释放，冷却 `cooldownMs`。
-- 按键判定：`XQueryPointer` 读取按键掩码（配置项 `key`：1=左键、2=中键、3=右键）。
+### 6.2 功能与互斥
 
-### 3.5 偏移自动化与可见性改造
+| 功能 | 当前逻辑 | 主要限制 |
+|---|---|---|
+| 自瞄 | FOV 内选靶，按平滑、灵敏度与屏幕误差移动；开镜键和开火键同时满足 | `lockTarget` 只锁定到死亡或离开 FOV；支持队伍/距离过滤 |
+| 后坐力补偿 | 读取 punchServices 的角度，只补偿帧间增量，按强度缩放 | 与持续锁头可能互相拉扯；异常大增量丢弃 |
+| 输入式子弹追踪 | 按住触发键，将准星移向目标头部；FOV=0 表示全屏 | 仍依赖客户端视角和服务器命中判定 |
+| 静默锁头 | 贴头 → 点击 → 等待 `holdMs` → 归位 | 不是 CUserCmd 级 silent aim；等待期间输入线程阻塞 |
+| 自动扳机 | 准星实体为有效敌人时点击，带按住与冷却时间 | 队伍过滤可配；不能据此推断真实遮挡关系 |
 
-| 改造 | 实现 |
-|---|---|
-| 偏移导入 | `core/OffsetsImporter`：递归解析 JSON 全部层级，`0x` 字符串 / 数字 / `{"value": N}` 三种取值；同名键按类作用域择优（`C_CSPlayerPawn` > `C_BaseEntity`/`CGameSceneNode`/`CSkeletonInstance` > `C_BaseModelEntity`/`CModelState` > 其他） |
-| 特征码集中 | `core/Patterns.h` 常量表（`kEntityList`/`kLocalPlayerPawn`/`kViewMatrix`），`config.json` 的 `sig*` 非空时覆盖常量 |
-| 可见性检测 | 读 `m_bSpotted`（1 字节）；`esp.visibilityCheck` 开启时被遮挡目标方框/血量颜色降低不透明度至 100 |
-| 界面反馈 | 控制面板底部显示「偏移来源: …」实际导入结果与导入条数 |
+输入循环按“静默/追踪/自瞄/后坐力/扳机”的既有分支协调，避免同一轮多个功能重复移动或点击。Panic 停止所有输入合成，并同时阻止内存写入。
 
-### 3.6 Linux 偏移生成器（tools/cs2_linux_offsets.py）
+## 7. 直接内存引擎
 
-Linux 版游戏模块是 ELF（`libclient.so`），公开 dumper（a2x/cs2-dumper）的 PE64 + memflow 方案无法在本机运行，其发布数据也与本机版本（ClientVersion 2000942 / 2026-11-04）不一致。因此自带一个只读生成器：
+### 7.1 公共前置条件与恢复
 
-| 环节 | 实现 |
-|---|---|
-| 进程访问 | `os.pread` 读 `/proc/<pid>/mem`（O_RDONLY），无需 root；模块范围取自 `/proc/<pid>/maps` |
-| 全局偏移 | 在 `libclient.so` 可执行段内扫描 Linux 版特征码，支持 `${'}`（rip 相对 disp32，下条指令 +4）等语义，解析为模块 RVA |
-| 字段偏移 | 通过 `libschemasystem.so` 的 `SchemaSystem_001` 接口实例遍历运行时 SchemaSystem，按 `libclient.so` scope 取 netfield 偏移 |
-| 输出 | `config/offsets.json`（扁平键，直接对接 `OffsetsImporter`） |
-| 校验 | 生成后回读：实体列表指针是否为堆地址、pawn 可读、health 在 1..100、view matrix 非退化 |
+- 配置已显式开启、快照有效、本地 pawn 非空、mem fd 可写、所需偏移存在。
+- 缺失项写入 `AppState::memoryMissing`，成功写入累计到 `memoryWrites`，面板和 `[mem]` 日志显示状态。
+- 锁角、MoveType、旋转与 maxspeed 等需要恢复的字段先缓存原值；功能退出、Panic 或线程停止时尝试恢复。
+- 恢复依赖进程与快照仍可用；游戏退出、权限消失或强制杀进程时不保证恢复成功。
 
-每次游戏更新后重跑 `python3 tools/cs2_linux_offsets.py` 即可刷新偏移；游戏必须处于运行状态。
+### 7.2 六组功能
 
-## 4. 权限要求
+| 功能 | 写入路径 | 安全/效果边界 |
+|---|---|---|
+| 加速 | `m_flVelocityModifier`，并放大 movementServices 的 `m_flMaxspeed` | 倍率钳制 1~5；只证明字段可写不代表服务器接受速度 |
+| 子弹追踪内存锁 | 写 eye/stashed shoot angles，清角速度和历史角；按配置保护或同步 `v_angle` | `bulletLockSyncView=false` 时画面可不动但服务器可能按真实朝向 miss；开启后相机随目标 |
+| 飞天 | 按热键写 `m_vecVelocity.z` 与 `m_vecAbsVelocity.z`，可选 MoveType | `flyUpKey=0` 会常驻上升；只在偏移和指针链有效时工作 |
+| 身体旋转 | scene 的 `m_angRotation`；关闭 `spinKeepView` 才写 `m_angAbsRotation` | absRotation 会带动渲染画面，默认不写 |
+| 真无后坐力 | punchServices 的 base/velocity/unpredictable，加 camera view punch，可选有界 cache | cache 仅在 `aimPunchCacheBytes>0` 时清，且长度钳制到 256 |
+| 弹着点控制 | 安全模式清 flinch 与武器 shake time；非安全模式额外清预测/散布字段 | 非安全模式可能造成客户端与服务器判定分叉，不代表真正取消服务器散布 |
 
-`/proc/<pid>/mem` 读取受 Yama `ptrace_scope` 限制。任选其一：
+武器侧字段通过 `pawn → weaponServices → active weapon handle → entity list` 解析；任一级失败即跳过。`m_flSpreadVData` 目前只有字段偏移，没有完整 VData 指针链，不能据此宣称静态基础散布已控制。
+
+### 7.3 证据分级
+
+1. **写入证据**：`writable=1`、写入计数增加、读回值改变。
+2. **保持证据**：哨兵探针为 HELD/PARTIAL，说明客户端是否快速覆盖。
+3. **效果证据**：离线对局录屏、日志和伤害结果交叉验证。
+4. **服务器证据**：当前外部实现不能直接证明；禁止由前三级推断“服务器一定认可”。
+
+## 8. 配置、面板与日志
+
+### 8.1 配置生命周期
+
+- 路径固定为 `<applicationDirPath>/config.json`，不是 shell 的当前目录。
+- 启动时若文件不存在，`Main.cpp` 用 C++ 内置默认值创建；CMake 源码构建则通常已提前复制 `config/default.json`。
+- 面板改动 400 ms 防抖自动保存；底部“应用并保存”可立即保存。
+- 保存前若三个全局 RVA 任一为零则拒绝落盘，防止一份空配置让全功能失效。
+- 每次保存先把现有文件复制为 `config.json.bak`；“恢复上一次”会校验 JSON，再保存，因此再次恢复可切回。
+- `Config::save` 先读回原 JSON，保留当前二进制不认识的根字段和 offsets 字段；但写文件本身不是事务性 `QSaveFile`，异常断电不在保证范围内。
+- UI 与两个工作线程通过原子 `shared_ptr<Config>` 交换完整配置，读者不修改共享对象。
+
+### 8.2 热重载
+
+- UI 每 400 ms 比较 `config.json` 和可执行文件旁 `config/offsets.json` 的 mtime。
+- 外部改动会重新 `Config::load` 并回填控件；回填期间禁止防抖保存，避免读回又立刻写回。
+- 只有偏移实际变化才 `Game::reloadOffsets` 并重新解析模块/特征码，普通开关变化不做昂贵扫描。
+- 自动启动刷新只负责更新 offsets 文件，随后由正常加载/热重载路径采用；生成失败不阻止启动。
+
+### 8.3 日志与自检
+
+- 共享日志首选 `/tmp/wv_lite.log`；不可写时统一回退 `/tmp/wv_lite_<uid>.log`，避免面板与写入方路径分叉。
+- 输入诊断超过 2 MB 截断；`WV_DEBUG=1` 增加终端输出，不是开启磁盘日志的必要条件。
+- 面板日志页按需读取末尾内容；自检约每 2 秒刷新，列出模块、9 个关键偏移和两个运行时指针。
+- `[mem]` 区分只读回退、无效快照、缺失偏移、目标选择和写入计数；它是排障证据，不是服务器结果证明。
+
+## 9. 工具链
+
+### 9.1 `tools/cs2_linux_offsets.py`
 
 ```bash
-sudo sysctl -w kernel.yama.ptrace_scope=0   # 临时放开
-sudo ./build/cs2_lite                        # 以 root 运行
+python3 tools/cs2_linux_offsets.py        # 生成、回读校验并写 config/offsets.json
+python3 tools/cs2_linux_offsets.py scan   # 只打印原始特征码命中
 ```
 
-## 5. 风险与对策
+- 只以 `O_RDONLY` 打开游戏，不写目标进程；需要游戏运行，完整生成还要求已进入对局以定位本地 pawn。
+- 扫描 Linux ELF 的 `libclient.so`，通过 RIP 相对指令定位全局；经 `libschemasystem.so` 的 `SchemaSystem_001` 遍历字段。
+- 校验实体列表、controller/pawn 回链、视图矩阵变化、生命/护甲/队伍和场景原点。
+- 可选字段未命中写 0，对应功能跳过；生成结果不是跨版本常量，不能只看 JSON 非零就认定运行时有效。
+- 客户端启动时从可执行文件目录向上最多五层寻找该工具，等待启动 3 秒、执行最多 15 秒；失败沿用旧文件。
+- 设置 `WV_SKIP_OFFSETS=1` 可跳过启动刷新；源码/工具不随二进制自动出现，精简发布包只能沿用随包偏移。
 
-| 风险 | 对策 |
-|---|---|
-| 游戏更新导致偏移失效 | 全部偏移/骨骼布局/分块参数外置 JSON，支持特征码自动解析 |
-| 骨骼布局不确定 | `boneStride/bonePosX/Y/Z` 可配；3x4 布局取 `0x30 / 0x0C / 0x1C / 0x2C` |
-| 叠加层抢焦点或挡点击 | `WS_EX` 等价方案：`X11BypassWindowManagerHint` + 空输入形状 + `WA_TransparentForMouseEvents` |
-| 独占全屏不出图 | 仅支持窗口化/无边框全屏（X11 合成器限制） |
-| 高频重绘占用 CPU | 3ms 定时器、仅前台显示、关闭多余渲染提示 |
-| 反作弊 | 仅用于离线/自建服务器研究，无任何规避设计 |
+### 9.2 `tools/cs2_probe_features.py`
 
-## 6. 验收
+```bash
+# 先正常退出 cs2_lite，避免它和探针同时写字段；默认采样 96 次
+python3 tools/cs2_probe_features.py
+python3 tools/cs2_probe_features.py 192
+```
 
-1. `cmake -S . -B build -G Ninja && cmake --build build` 零警告零错误。✅ 已通过
-2. 启动后控制面板显示，状态栏输出进程/偏移状态。✅ 已通过（截图确认）
-3. 填入当前版本偏移后进入游戏：方框贴合目标、自瞄按键生效、扳机命中开火。⏳ 需游戏进程与偏移
-4. 改 `config.json` 后重启生效，无需重编译。✅ 设计如此
-5. `offsetsFile` 指向 cs2-dumper `offsets.json` 时，界面「偏移来源」显示导入条数，键值映射正确。✅ 已用样例文件验证（12 项）
-6. 开启「可见性双色」后被遮挡目标降透明度，关闭时统一颜色。⏳ 需游戏进程验证
+这是**写入型**哨兵工具：修改 float → 1 ms 间隔读回 → 恢复原值。HELD ≥ 0.9、PARTIAL ≥ 0.2，其余为 OVERWRITTEN；地址无效、不可读、不可写也会单独显示。它需要 `O_RDWR`，仅用于离线环境。HELD 只证明值能保持，不证明玩法效果或服务器认可。
 
-## 7. 依赖与可追溯来源
+### 9.3 `tools/cs2_probe_accuracy.py`
 
-| 依赖 / 设计点 | 来源 |
-|---|---|
-| `/proc/<pid>/mem` + `pread64` 读取 | Linux `proc(5)`、`pread(2)` |
-| 实体分块（`0x10` 块指针表、`0x78` 实体步长、`>>9` / `&0x1FF`） | a2x/cs2-dumper schema 与 Source 2 实体系统公开分析 |
-| `offsets.json` 字段命名 | a2x/cs2-dumper 输出格式（`client.dll` / `C_*` 类分层） |
-| 叠加层输入穿透 | `XShapeCombineRectangles(ShapeInput, …)`，Xext 官方文档 |
-| 鼠标合成 | XTest `XTestFakeRelativeMotionEvent` / `XTestFakeButtonEvent` |
-| 参考项目分层 | Osiris（MIT）、TKazer/CS2_External、Exlodium/CS2-External-Base |
+```bash
+python3 tools/cs2_probe_accuracy.py      # 默认 3 次
+python3 tools/cs2_probe_accuracy.py 10
+```
 
-## 4. 阶段十扩展（零新增偏移）
+只读显示 pawn、camera 与当前武器上的动态散布/抖动字段，采样间隔 200 ms。未持枪、观战或死亡时武器链为空属预期。字段为 0 只能作为引擎压零的观察证据，仍需弹道与伤害结果验证。
 
-本轮扩展的约束：**不读取任何新偏移**，全部基于 `Snapshot` 已采集字段（`health / team / visible / origin / headScreen / feetScreen / distance`）。
+三个脚本均无 argparse 帮助页，不要把 `--help` 当无副作用命令；它会按普通参数或正常执行路径尝试连接游戏。
 
-| 功能 | 依赖字段 | 配置项 |
+## 10. 构建、测试与 CI
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"
+ctest --test-dir build --output-on-failure
+python3 -m py_compile tools/cs2_linux_offsets.py \
+  tools/cs2_probe_features.py tools/cs2_probe_accuracy.py
+```
+
+- 默认目标：`cs2_lite` 与 `cs2_tests`；`-DCS2_LITE_BUILD_TESTS=OFF` 可关闭测试。
+- 测试覆盖 Math 的投影/朝向/屏外方向，以及 Config 默认值、六组内存默认值和 JSON 往返。
+- 主程序启用 `-Wall -Wextra -Wpedantic`；目标链接 Qt6、X11、Xext、Xtst。
+- CI 在 main 推送、PR、v* 标签和手动触发时执行相同 Release 构建与测试。
+- 单元测试不连接 CS2，不验证 X11 合成器、UInput 枚举、当前偏移或服务器行为；这些必须分别做桌面和对局验收。
+
+## 11. 游戏更新后的维护流程
+
+1. **更新并取证**：记录 ClientVersion、日期、进程与模块信息，保留旧配置备份。
+2. **生成偏移**：进入离线对局，运行生成器；三个全局 RVA、实体步长、骨骼和新增内存字段分别检查。
+3. **审查差异**：比较新旧 `offsets.json`，识别 0 值、异常跳变和 class 作用域变化；不要批量沿用旧值。
+4. **先只读验收**：关闭全部输入与内存功能，确认玩家、队伍、生命、护甲、投影和骨骼正确。
+5. **再验输入**：确认 `backend=uinput` / `uinput_ready=1`，逐项检查热键、移动、点击、Panic 与目标过滤。
+6. **最后验内存**：先退出主程序跑哨兵，再启动主程序逐项开启，记录读回、覆盖、恢复和 `[mem]`。
+7. **效果与副作用**：录屏检查弹道、伤害、相机、速度、视角及退出恢复；不把客户端反馈当服务器证据。
+8. **回归与归档**：构建、CTest、Python 语法检查、X11 冒烟；更新 README/PLAN 的当前值，将详细取证追加到 PHASE_LOG。
+
+## 12. 验收清单
+
+| 层级 | 必须检查 | 当前自动化覆盖 |
 |---|---|---|
-| 血量数值 | `health` | `esp.healthText` |
-| 可见性双态（实线 / 虚线+低透明） | `visible` + `m_bSpotted` | `esp.visibilityCheck` |
-| 2D 雷达（固定北向） | `origin`、`localOrigin`、`distance` | `esp.radar`、`esp.radarRange` |
-| FOV 圈门控着色 | `AppState::aimGate`（Features 写入） | 无（跟随 `aim.scopeKey/fireKey`） |
-| 目标策略（屏幕最近 / 血量最低 / 世界最近） | `headScreen`、`health`、`distance` | `aim.strategy` |
-
-设计取舍：
-
-- 雷达固定北向而非视角对齐 —— 视角 yaw 需从视图矩阵推导，矩阵行列布局未有官方文档确认，按规范不做推测实现。
-- 目标策略在 FOV 内做二次筛选，因此「血量最低」也只在准星附近生效，避免跨图甩枪。
-- 面板与叠加层共用一套配色：深炭 `#12141A`、表面 `#171A21`、强调琥珀 `#E0A23C`、T 方 `#E6A23C`、CT 方 `#4A90E2`；读数字体 `DejaVu Sans Mono`。
-
-
----
-
-## 5. 阶段十一：面板极简化（黑白双色）
-
-约束：只改 `src/ui/Menu.cpp`、`src/ui/Menu.h`，不触碰采集、偏移、配置字段。
-
-| 项 | 方案 |
-|---|---|
-| 窗口 | `Qt::FramelessWindowHint` + `WA_TranslucentBackground`，`paintEvent` 画圆角玻璃（14 px 圆角、alpha 216 底板、1 px 白色 30 alpha 描边、顶部高光） |
-| 交互 | 自定义拖动（`globalPosition` 差值）、首次居中、右上角 `✕` 关闭 |
-| 布局 | 移除 QGroupBox，改为小节标签（10 px，字母间距 3 px）+ 1 px 分隔线；复选框两列；字段行左对齐、数字框固定宽度 |
-| 配色 | 黑白双色：白 `#F2F3F5` / `#EDEFF2`、灰阶文字 `#E9EAEC`→`#55595F`，无彩色强调 |
-| 叠加层 | 不变。ESP 的 T/CT 双色属于数据语义（区分敌我），不参与面板的黑白收敛 |
-
----
-
-## 6. 阶段十二：双列表布局
-
-| 项 | 方案 |
-|---|---|
-| 主体 | `QHBoxLayout` 两列 + 1 px 竖分隔线（白色 14 alpha） |
-| 左列 | 透视（复选框两列、雷达行）+ 扳机 |
-| 右列 | 自瞄（策略、平滑、范围、灵敏度）+ 偏移提示 + 应用按钮 |
-| 宽度 | 322 → 520 px；数字框随列宽收窄（雷达 74 / 扳机 78 / 自瞄 80 px） |
-| 不变 | 配置字段、apply 逻辑、黑白双色 QSS、玻璃底板绘制 |
-
----
-
-## 7. 阶段十三：完全透明背景
-
-| 项 | 方案 |
-|---|---|
-| 底板 | `paintEvent` 不再填充，只画 1 px 圆角线框（白 56 alpha） |
-| 输入控件 | 透明底 + 1 px 边线（白 70 alpha），hover/focus 时 26 alpha 白底 |
-| 主按钮 | 描边样式（白 90 alpha），hover 反白 |
-| 分隔 | 横向 70 alpha、纵向 52 alpha 的 1 px 线 |
-| 可读性 | 文字整体提亮至 `#E9EBEE~#9AA0A6`；依赖合成器，`Depth: 32` ARGB 已确认 |
-
----
-
-## 8. 阶段十四：左导航 + 右分类页
-
-| 项 | 方案 |
-|---|---|
-| 结构 | `QHBoxLayout`：`QListWidget#nav`（88 px）+ 1 px 竖线 + `QStackedWidget` |
-| 分类 | 透视 / 自瞄 / 扳机，`currentRowChanged → setCurrentIndex`，默认第 0 页 |
-| 导航样式 | 透明底灰字 → hover 白 18 alpha → 选中反白 + 深字，圆角 7 px |
-| 宽度 | 520 → 440 px |
-| 清理 | 删 `sectionLabel()` 与 `QLabel#section`；补 `QListWidget`/`QStackedWidget` include |
-| 不变 | 配置字段与 `apply()` 逻辑、黑白双色、全透明仅线框、底部提示与保存按钮 |
-
----
-
-## 9. 阶段十五：热重载 / 可见性优先 / 偏移守卫
-
-| 项 | 方案 |
-|---|---|
-| 热重载 | 复用 400 ms `QTimer` + `QFileInfo::lastModified()` 比对 `configStamp_`，变化则 `Config::load` → 替换 `state_.config` → `syncFrom` 回填控件 |
-| 写盘一致性 | `apply()` 后同步 `configStamp_`，防止自写触发多余重载 |
-| 选靶 | FOV 作为固定门槛；同层内按 strategy 比较，可见目标整层优先（`m_bSpotted`） |
-| 偏移守卫 | 检查 6 类关键偏移，缺失时底部改白字加粗并列出缺项 |
-| 不实现 | 后坐力补偿（无权威偏移）、雷达扇形（view 矩阵手性无法验证） |
-
----
-
-## 10. 阶段十六：日志页 / 距离分级 / 骨骼关节 / 触发抖动
-
-| 项 | 方案 |
-|---|---|
-| 日志页 | `tailOfLog()` 读末尾 8 KB → 末 16 行；仅当日志页可见时刷新 |
-| 导航 | 4 个 `QPushButton#tab`（checkable + autoExclusive，88×30）替代 QListWidget，规避视口裁剪 |
-| 距离分级 | 透明度 15 m 满亮 → 60 m 0.45，线性；作用于方框 / 骨骼 / 遮挡色 |
-| 骨骼关节 | 每段两端 1.8 px 圆点，透明度随距离衰减 |
-| 扳机 | 仅可见目标；按压时长 ±20% 随机抖动，下限 1 ms |
-
----
-
-## 11. 阶段十七：配置保存与「上一次配置」回滚
-
-| 项 | 方案 |
-|---|---|
-| 备份 | 每次写盘前把现有 `config.json` 复制为 `config.json.bak`（覆盖前先 `QFile::remove`，`QFile::copy` 不覆盖已有文件） |
-| 统一落盘 | 抽出 `persist(config, message)`：备份 → `Config::save` → 写入 `state_.config` → 同步 `configStamp_` → 状态栏提示 |
-| 回滚 | 底部新增「恢 复 上 一 次」按钮：校验 `.bak` 是可解析的 JSON 对象后 `Config::load` → `syncFrom` → `persist`；因回滚本身也会备份当前配置，再点一次即切回 |
-| 布局 | 底部改为 `QHBoxLayout`：回滚按钮拉伸 1、应用按钮拉伸 2，与既有 `#apply` / `#restore` 两套 QSS 对应 |
-| 忽略 | `.gitignore` 追加 `config.json.bak` |
-
----
-
-## 12. 阶段十八：三项内存派生功能（护甲 / 掉血浮字 / 准星目标高亮）
-
-| 项 | 方案 |
-|---|---|
-| 护甲数值 | 新增可选偏移 `m_ArmorValue`（cs2-dumper 的 `C_CSPlayerPawn` 字段），偏移为 0 时不读取，`PlayerInfo::armor` 保持 -1，叠加层跳过绘制 |
-| 掉血浮字 | 不引入新偏移：叠加层按实体序号缓存上一帧 `m_iHealth`，掉血即记录差值 + 时间戳，1 s 内上浮淡出；目标消失或序号复用时清理 |
-| 准星高亮 | 复用已有 `m_iIDEntIndex` → `Snapshot::crosshairIndex`，与 `PlayerInfo::index` 相同实体编号空间，命中目标外扩 3 px 白框 |
-| 配置 | `esp.armor`、`esp.damageNumbers` 默认 false，面板第 5 行两个复选，`syncFrom` 与 `apply` 同步 |
-| 落盘 | 偏移键 `m_ArmorValue` 纳入 `Config` 的 offsets 读写与 `OffsetsImporter` 绑定表，`config/default.json` 补默认值 |
-
----
-
-## 13. 阶段十九：护甲偏移纳入 schema 生成器
-
-| 项 | 方案 |
-|---|---|
-| 生成器 | `tools/cs2_linux_offsets.py` 增加 `need_any(["C_CSPlayerPawn","C_CSPlayerPawnBase"], "m_ArmorValue")`，按继承链取第一个命中（字段声明类随版本变化） |
-| 解析类 | `wanted` 集合补 `C_CSPlayerPawnBase`，否则基类绑定不会被遍历 |
-| 校验 | 本地 pawn 输出增加 `armor=`，与 `health/team` 同批打印；偏移同时写进 `config/offsets.json` |
-| 文档 | README 偏移表与 `esp` 配置表补 `m_ArmorValue` / `armor` / `damageNumbers` |
-
----
-
-## 14. 阶段二十：全功能失效的根因与修复
-
-用户反馈「所有功能都无法使用了」，逐层排查后确认是四条独立缺陷叠加，逐条修复。
-
-| # | 缺陷 | 根因 | 方案 |
-|---|---|---|---|
-| 1 | 透视 / 方框 / 自瞄全部无输出 | `build/config.json` 的 `offsets` 被写成全 0（1473 字节），`Game` 拿到零偏移后所有读取落空 | `Menu::persist()` 在落盘前拦截三个全局偏移（`dwEntityList` / `dwLocalPlayerPawn` / `dwViewMatrix`）任一为 0 的情况，只提示不写盘；生成器产出的 `config/offsets.json` 通过 `POST_BUILD` 复制到可执行文件目录，`offsetsFile` 的相对路径在 `build/` 启动时也能解析，缺失的偏移可自愈 |
-| 2 | 骨骼连线失效 | 生成器把 schema 的 `CSkeletonInstance.m_modelState`（320，CModelState 结构体起点）当成骨骼数组指针偏移写出；实测骨骼数组在 `scene + 0x1c0`（= 448） | 生成器不再输出 `m_modelState`，仅打印说明；`config/offsets.json` 与 `build/config.json` 回填 448 |
-| 3 | 面板被整块遮住且点不回前台 | `Qt::FramelessWindowHint \| Qt::Window` 无标题栏，且无置顶 | 补 `Qt::WindowStaysOnTopHint` |
-| 4 | 扳机永不触发 | 选靶逻辑用 `m_bSpotted` 做可见性硬门控，而该字段在本版本恒 0 | 移除扳机的 `if (!target->visible) return;`，仅保留队伍检查 |
-
-`Game::resolveOffsets()` 的缺失判定同步放宽：`m_modelState == 0` 不再并入「偏移缺失」，只降级提示「骨骼偏移缺失，连线不可用」，方框与血量照常。
-
----
-
-## 15. 阶段二十一：后坐力抵消与五项交互增强
-
-| 功能 | 依赖 | 实现要点 |
-|---|---|---|
-| 后坐力抵消 | `m_aimPunchAngle`（缺失时退回 `m_aimPunchCache`） | `Game` 每帧读 punch 角度进 `Snapshot::aimPunch`；`Features::recoilStep()` 只补偿帧间增量，`maxDegrees` 之外视为脏数据丢弃；强度可为负值以翻转方向 |
-| 热键重绑定 | 无 | 面板下拉改写 `aim.scopeKey` / `aim.fireKey` / `trigger.key`；X11 核心协议只暴露 Button1~5，故仅提供 不限/左键/中键/右键 |
-| 掉血浮字时长与颜色 | 无 | `esp.damageMs` / `esp.damageColor`，颜色用 4 档预设避免自造取色器 |
-| 残血描边 | 无 | `esp.highlight`，取本帧可绘制敌人中的最低血量者画外框；准星目标白框优先 |
-| 残影轨迹 | 无 | `esp.trail` / `esp.trailMs`，按实体序号缓存脚底屏幕坐标，窗口外逐点淘汰 |
-
-配置层同步：`Config::RecoilConfig`、`EspConfig` 新增四个字段、`Offsets` 新增两个 punch 字段、`OffsetsImporter` 新增两条绑定、`tools/cs2_linux_offsets.py` 增加 `maybe_any()` 可选探测（未命中不终止生成，只打印 `recoil disabled`）。
-
-面板状态行新增 4 秒驻留：`persist()` 的提示此前会被 400 ms 的连接状态轮询立刻覆盖，用户看不到「已保存」或「后坐力偏移缺失」。
-
-## 16. 阶段二十二：启动自动刷新偏移 + 后坐力链路改为实测字段
-
-需求目标：游戏每次更新后 `dwEntityList` / `dwViewMatrix` / `dwLocalPlayerPawn` 与各 netfield 偏移都会漂移，用户必须手动跑生成器才发现偏移过期。改为客户端启动时自动执行一次生成器，并修正阶段二十一里被证伪的后坐力字段。
-
-实现方式：
-
-| 项 | 变更点 | 说明 |
-| --- | --- | --- |
-| 启动自动生成 | `src/Main.cpp` 新增匿名命名空间 `refreshOffsets()` / `appendLog()` | 从 `applicationDirPath()` 向上最多 5 层找 `tools/cs2_linux_offsets.py`，`QProcess` 以 `python3` 执行，`waitForStarted(3000)` + `waitForFinished(15000)`；成功则把 `PROJECT/config/offsets.json` 复制到可执行文件目录的 `config/`（先 `remove` 再 `copy`，因为 `QFile::copy` 目标存在会失败） |
-| 调用时机 | `Config::load()` 之前 | `load()` 会立刻 `importOffsetsFile()`，晚一步只能吃到旧值 |
-| 失败降级 | 任一步失败只写日志 | 未找到脚本 / python3 起不来 / 超时（kill 后收尾）/ 非零退出 → 沿用现有 `config/offsets.json`，不影响启动 |
-| 跳过开关 | `WV_SKIP_OFFSETS=1` | 生成器异常或不想等待时跳过 |
-| 诊断 | 追加写 `/tmp/wv_lite.log`，前缀 `[offsets]` | 与面板日志页同源，可直接看到「已刷新偏移 / 生成失败 / 生成超时」 |
-| 后坐力字段 | `Offsets` 的 `m_aimPunchAngle` / `m_aimPunchCache` → `m_aimPunchAngle`(QAngle 内偏移) + `m_pAimPunchServices`(pawn 上的指针) | 本版本 schema 不存在 `m_aimPunchAngle` / `m_aimPunchCache`；实测链路是 `C_CSPlayerPawn.m_pAimPunchServices`(0x1520) → `CCSPlayer_AimPunchServices.m_predictableBaseAngle`(0x50) |
-| 生成器 | `tools/cs2_linux_offsets.py` | `wanted` 增加 `CCSPlayer_AimPunchServices`；输出 `m_pAimPunchServices` / `m_aimPunchAngle`，删除 `m_aimPunchCache`；两者仍走 `maybe_any()`，缺失不终止生成 |
-
-依赖 API：`QProcess::start/waitForStarted/waitForFinished/exitStatus/exitCode`、`QDir::cdUp`、`QFile::copy/remove`、`QCoreApplication::applicationDirPath`、`qEnvironmentVariableIsSet`。
-
-潜在风险：
-
-- 生成器耗时随进程内存增长；实测本机 cs2 在跑时 0.59 s，15 s 上限留足余量。若 15 s 仍超时只会放弃刷新，不阻塞主流程。
-- 生成器退出码非 0（cs2 未运行）时保持旧偏移，用户会看到面板状态「未找到进程」，不会静默用错值。
-- 复制目标在可执行文件目录（`build/config/offsets.json`），仓库 `config/offsets.json` 保持为生成器直写结果，二者都在 `.gitignore` 之外需注意提交内容。
-
-兼容范围：仅 Linux（`/proc/<pid>/mem`、`python3`）。`WV_SKIP_OFFSETS` 供无 python3 环境或调试用。
-
-## 17. 阶段二十三：子弹追踪（开火锁头）
-
-需求目标：不管准星指向哪里，只要按住触发键，准星立刻拉到最近敌人的头部；持续按住则每帧重新贴合，形成「子弹跟着人走」的效果。
-
-实现方式：
-
-| 项 | 变更点 | 说明 |
-| --- | --- | --- |
-| 配置 | `TrackConfig`（`enabled` / `key` / `fovPixels` / `smooth` / `teamCheck` / `maxDistance`） | `fovPixels = 0` 表示全屏，不做半径筛选，对应「不管打哪」 |
-| 目标选择 | `Features::trackStep()` | 遍历 `Snapshot::players`，跳过死亡与队友，可见者优先、再取屏幕距离最近；`headScreen` 由 `Game` 的 `worldToScreen` 投影（已过滤相机后方） |
-| 位移 | `XTestFakeRelativeMotionEvent` 直接写相对位移 | 不乘 `sensitivityFactor`，`smooth = 1` 时单帧贴合；`smooth > 1` 平分到多帧 |
-| 互斥 | 先于 `aimStep` 执行并返回 `bool` | 两个都写相对位移会在一帧内互相拉扯，追踪一旦接管本帧就跳过自瞄 |
-| 界面 | 自瞄页新增「子弹追踪（锁头）」「过滤队友」、半径（0 显示为「全屏」）、平滑、触发键 | 触发键沿用 `mouseKeyCombo()`，只提供 不限/左键/中键/右键 |
-
-依赖 API：`XTestFakeRelativeMotionEvent`、`XFlush`（libXtst，项目既有依赖）。
-
-潜在风险：
-
-- 外部只读实现无法改写服务端弹道，本质是「开火前把视角钉在头部」；命中判定仍由服务器按客户端视角结算。
-- 与后坐力抵消同时开启会互相拉扯：追踪按头部屏幕坐标重定位，后坐力按 punch 增量补偿。建议二选一，或把后坐力强度调低。
-- `headScreen` 的屏幕原点由视口尺寸推导，纯全屏下正确；窗口模式会有固定偏移，与既有自瞄一致。
-
-兼容范围：X11 + XTest。Wayland 原生会话下 XTest 不可用（与既有自瞄、扳机同限制）。
-
-## 18. 阶段二十四：静默锁头（不需瞄准即命中）
-
-需求目标：准星完全不对着敌人，只要想开枪就能打到头部。
-
-技术边界：本仓库是外部只读架构（`/proc/<pid>/mem` 以 `O_RDONLY` 打开），不写游戏内存。真正的 silent aim 需要在 `CreateMove` 之后篡改 `CUserCmd.viewangles`，外部实现要求：
-1. `mem` 改为 `O_RDWR`（或 ptrace），与「只读」设计冲突；
-2. 目标结构在活体内存中可定位且可验证（当前 schema 未暴露 `CUserCmd`，没有权威偏移来源）。
-
-两条都不满足，因此不写内存、不臆造 usercmd 偏移。改为在输入层实现等效效果：**开火瞬间由程序自己把准星落到头部、合成点击、再归位**。
-
-实现方式：
-
-| 项 | 变更点 | 说明 |
-| --- | --- | --- |
-| 配置 | `SilentConfig`（`enabled` / `key` / `holdMs` / `cooldownMs` / `fovPixels` / `teamCheck` / `maxDistance`） | `key` 默认鼠标中键，避免与真实左键开火冲突 |
-| 目标选择 | `Features::silentStep()` | 与 `trackStep` 同一套筛选：死亡跳过、队友过滤、可见优先、屏幕最近 |
-| 快照定位 | `XTestFakeRelativeMotionEvent(±offset)` | 相对位移按屏幕像素直接对齐 `headScreen`，不需灵敏度系数 |
-| 开火 | `XTestFakeButtonEvent(1, press)` + `holdMs` 后 release | `holdMs` 默认 30 ms，覆盖 64 tick 的 15.6 ms 采样窗口，让游戏一定在贴头状态下处理该次输入 |
-| 归位 | 反向相对位移 | 玩家准星回到按下触发键前的朝向，画面只闪一下 |
-| 互斥 | 静默锁头优先，命中则跳过 `triggerStep` | 否则同一次按键会打出两发 |
-
-依赖 API：`XTestFakeRelativeMotionEvent`、`XTestFakeButtonEvent`、`XFlush`、`std::this_thread::sleep_for`。
-
-潜在风险：
-
-- 不是内存级 silent aim：视角仍在贴头期间真实移动 `holdMs`，观感是「瞬闪」，不是完全无痕。
-- `holdMs` 是命中率与观感的直接权衡：低于一个 tick 可能被取样到归位后的角度而打空。
-- 该函数会在特性线程内阻塞 `holdMs`（默认 30 ms），期间自瞄/后坐力暂停；`holdMs` 调的过大（>100）会明显卡顿。
-- 与「子弹追踪」同开时两者都抢准星，建议只开一个。
-
-兼容范围：X11 + XTest。
-
-
-## 19. 阶段二十五：功能单列 + 右键参数弹层
-
-需求目标：类别分类保留（左栏四个类别页），页内改成「一个功能一行」；该功能的参数收进右键弹层，右键点行即可调。
-
-实现方式：
-
-| 项 | 变更点 | 说明 |
-| --- | --- | --- |
-| 布局 | `Menu::buildUi()` | 类别栏改为顶部 `QHBoxLayout` 横排四等分按钮（`tabs_[4]`，高 30），下方 `QStackedWidget` 四页；每页一个 `QScrollArea`（横滚关闭，最小高 330）内 `QVBoxLayout` 单列行表 |
-| 行 | `Menu::makeRow()` | `QWidget#row` + `QCheckBox`（功能开关）+ 右侧 `QLabel#hint`；有参数的行走「右键参数」提示 |
-| 弹层 | `Menu::attachParams()` / `ensurePopup()` | `Qt::Popup` 子窗口，行与勾选框都挂 `CustomContextMenu`；首次右键惰性构建并缓存到 `QHash<QString, QWidget*> popups_`，之后再右键只 `move/show/raise` |
-| 落盘 | `Menu::eventFilter()` | 监听弹层 `QEvent::Hide` → `apply()`；弹层一关即写 `config.json`，不必回底部点保存 |
-| 控件归属 | `buildUi()` | 所有参数控件在构造期一次创建（父为 `Menu`），由弹层布局接管；`apply()` / `syncFrom()` 字段对应关系不变 |
-| 面板底板 | `Menu::paintEvent()` / `resizeEvent()` | 本机 X 会话无合成器（`_NET_WM_CM_S0` 缺失），ARGB 半透明窗口的透明区会直接贴屏成未初始化像素；改为不透明底色 + `setMask()` 圆角裁切 |
-| 参数控件归属 | `buildUi()` | 只存在于弹层里的 `QSpinBox` / `QDoubleSpinBox` / `QComboBox` / `QCheckBox` 先收进隐藏容器 `paramHolder`，避免首次右键前堆在面板 `(0,0)` 画成一片 |
-
-依赖 API：`QScrollArea`、`QWidget(Qt::Popup)`、`QEvent::Hide`、`QWidget::customContextMenuRequested`、`QWidget::mapToGlobal`、`QWidget::setMask()` / `QRegion`。
-
-潜在风险：
-
-- `Qt::Popup` 在部分合成器下会单独占一个覆盖窗口；无合成器的 X11 为普通子窗口，焦点丢失由 Qt 自己处理。
-- 弹层关闭才落盘：只改勾选框、既不开弹层也不点「应用并保存」时不会写入，底部按钮仍保留为兜底路径。
-- 透视页 13 行约 325 px，刚好在 330 px 内；再增加功能行时该页会出现竖向滚动。
-- 不透明底板牺牲了玻璃质感，换取无合成器环境下的可读性；若日后确认会话有合成器，可再恢复半透明分支。
-
-兼容范围：Qt6 Widgets（X11 / Wayland 均可，弹层为纯 Qt 控件，不依赖 XTest）。
-
-## 20. 阶段二十六：左上角控件堆叠修复
-
-需求目标：面板左上角出现「一堆按键糊一块」的残影，横排类别栏后仍未消失，需要定位真因并修掉。
-
-实现方式：
-
-| 项 | 变更点 | 说明 |
-| --- | --- | --- |
-| 参数控件 | `Menu::buildUi()` | 只在右键弹层里使用的 25 个参数控件，构造后统一 `setParent(paramHolder)`（`Menu` 下隐藏容器），首次右键由 `paramRow()` 重新挂到弹层行上 |
-| 面板底板 | `Menu::paintEvent()` + `Menu::resizeEvent()` | 去掉 `WA_TranslucentBackground`，改为不透明 `(15,17,19)` 填充 + 1px 圆角描边；圆角用 `QPainterPath` → `setMask(QRegion)` 裁切 |
-| 声明 | `Menu.h` | 新增 `resizeEvent()` 覆写 |
-
-依赖 API：`QWidget::setParent()`、`QWidget::setMask()`、`QRegion`、`QPainterPath::addRoundedRect()`。
-
-潜在风险：
-
-- 底图不再透明，玻璃质感消失；本机无合成器（`_NET_WM_CM_S0` 缺失），透明反而会露出未初始化像素。
-- 参数控件由隐藏容器托管，若后续把它们直接放进页面需改回常规父子关系。
+| 文档/配置 | JSON 合法、链接可达、默认键与 Config 对齐、示例数值与 offsets 文件一致 | 可在仓库脚本/本地检查 |
+| 编译/单元 | Release 编译无错误，CTest 通过 | CI 每次 main / PR 执行 |
+| 桌面 | X11 窗口跟随、透明、穿透、面板搜索/录制/保存、Xvfb 存活 | 无 CI，需要桌面或 Xvfb |
+| 进程只读 | mem 打开、模块基址、实体、矩阵、骨骼、只读降级 | 需要运行中的游戏 |
+| 输入 | UInput 就绪、XTest 回退、鼠标/键盘热键、Panic | 需要游戏与真实输入 |
+| 内存写入 | 前置条件、原值缓存、关闭恢复、武器链、缺失偏移跳过 | 需要离线对局 |
+| 玩法结果 | 锁角命中、散布、加速/飞天、旋转观感、服务器伤害 | 无自动化，不可由编译推断 |
+
+## 13. 后续维护计划
+
+### 13.1 优先维护
+
+- 游戏更新后先修复偏移与回读校验，再处理功能效果；历史数值不得直接作为当前基线。
+- 配置新增字段时同步 `Config.h` 默认值、`Config.cpp` 读写、`config/default.json`、UI apply/sync、测试和文档。
+- 新内存字段必须有缺失偏移跳过、地址范围保护、关闭恢复和诊断，不写入未经确认的指针链。
+- 任何声称“真实命中”“无后坐力”“速度生效”的提交，必须附与结论层级相符的离线对局证据。
+- 保持 Qt 控件只由 GUI 线程访问；新增工作线程共享数据须明确原子或 mutex 边界。
+
+### 13.2 后续可选项（未实现，不纳入当前承诺）
+
+- 把 offsets 与探针的公共进程读取、schema 和指针链代码抽成共享 Python 模块，减少漂移。
+- 为 offsets 导入、X11 keysym、输入状态机和内存恢复增加无游戏依赖的可测试边界。
+- 将合法 JSON、文档示例、SVG/XML 和 Markdown 本地链接检查纳入 CI。
+- 若要支持原生 Wayland，应单独立项评估门户、全局输入和叠加协议；不能用现有 X11 路径宣称兼容。
+
+## 14. 许可与变更原则
+
+- 本项目采用 **GPL-3.0-only**，完整正文见仓库根目录 [LICENSE](../LICENSE)；没有附加 “or any later version” 授权。
+- README、PLAN、架构图和源码注释用于解释现状；PHASE_LOG 保留历史，不回写历史阶段使其看似当时已经验证。
+- 文档修订不得夹带运行逻辑改动。行为变化应单独提交、单独测试，并明确新增风险。

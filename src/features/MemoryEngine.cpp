@@ -324,9 +324,9 @@ void MemoryEngine::step(void* display, const Config& config, const Snapshot& sna
         }
     }
 
-    // ---- 5. 子弹追踪内存锁：不看准星、不看 FOV、不看按键，每帧锁射击角 ----
-    // v_angle（本地相机角）全程不写，准星与视角纹丝不动；射击结算角被强制
-    // 锁到最近敌人头部。同时清掉角速度与历史角数组，防止游戏下一 tick 回滚。
+    // ---- 5. 子弹追踪内存锁：不看准星与 FOV，按热键 / 距离 / 队伍条件锁射击角 ----
+    // 清角速度与历史角，防止游戏下一 tick 回滚；v_angle 由下方的视角保护或
+    // 命中优先分支显式处理，目标暂时消失时在 holdMs 内沿用上一帧角度。
     const bool anglesReady = o.m_angEyeAngles != 0 || o.m_angStashedShootAngles != 0;
     const bool lockHeld =
         m.bulletTrack && anglesReady &&

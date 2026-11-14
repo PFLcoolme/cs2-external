@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="520" viewBox="0 0 1000 520" role="img" aria-labelledby="title desc">
   <title id="title">cs2-external 架构总览</title>
-  <desc id="desc">Linux 外部只读辅助的分层架构：/proc 数据源、core 核心层、game 游戏层、render 叠加层、features 输入层、ui 控制面板。</desc>
+  <desc id="desc">Linux 外部辅助的分层架构：/proc 读写数据源、core 核心层、game 游戏层、render 叠加层、features 输入与直接内存线程、ui 控制面板。</desc>
 
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -42,13 +42,13 @@
 
   <!-- 标题 -->
   <text class="title" x="32" y="46">cs2-external · 分层架构</text>
-  <text class="sub" x="32" y="70">只读 /proc 数据源 → 快照 → 叠加层与输入；无注入、无写内存</text>
+  <text class="sub" x="32" y="70">/proc 读写与输入设备 → 共享快照 → 叠加层、输入与内存引擎；无注入</text>
 
   <!-- 数据源 -->
   <rect class="box" x="32" y="100" width="230" height="130" fill="#121c2b"/>
   <text class="h" x="48" y="126">内核数据源</text>
   <text class="t" x="48" y="150">/proc/&lt;pid&gt;/comm · maps · mem</text>
-  <text class="t" x="48" y="170">pread64 只读读取</text>
+  <text class="t" x="48" y="170">pread64 / pwrite64 · 只读回退</text>
   <text class="t" x="48" y="190">libclient.so 基址与段范围</text>
   <text class="t" x="48" y="210">Yama 权限边界</text>
 
@@ -68,7 +68,7 @@
   <text class="h" x="584" y="126">game</text>
   <text class="t" x="584" y="150">Game · 实体分块遍历</text>
   <text class="t" x="584" y="170">骨骼 / 视图矩阵 / 投影</text>
-  <text class="t" x="584" y="190">Snapshot · 无锁快照发布</text>
+  <text class="t" x="584" y="190">Snapshot · mutex 保护整份拷贝</text>
   <text class="t" x="584" y="210">CS2 → 玩家数组</text>
 
   <!-- render -->
@@ -79,11 +79,13 @@
   <text class="t" x="584" y="360">XRaiseWindow 置顶 · 30ms</text>
 
   <!-- input -->
-  <rect class="box" x="300" y="350" width="230" height="110" fill="url(#input)"/>
-  <text class="h" x="316" y="376">features</text>
-  <text class="t" x="316" y="400">Features · 自瞄 / 扳机线程</text>
-  <text class="t" x="316" y="420">XTest 合成鼠标位移与按键</text>
-  <text class="t" x="316" y="440">XQueryPointer 按键状态</text>
+  <rect class="box" x="300" y="330" width="230" height="150" fill="url(#input)"/>
+  <text class="h" x="316" y="356">features</text>
+  <text class="t" x="316" y="380">Features · 自瞄 / 扳机线程 · 1ms</text>
+  <text class="t" x="316" y="400">UInput 常驻虚拟鼠标 · XTest 回退</text>
+  <text class="t" x="316" y="420">XQueryPointer / XQueryKeymap 按键</text>
+  <text class="t" x="316" y="440">MemoryEngine · 直接内存线程</text>
+  <text class="t" x="316" y="460">六组功能 · 2ms / 锁角 1ms</text>
 
   <!-- ui -->
   <rect class="box" x="32" y="270" width="230" height="190" fill="#16202f"/>
@@ -93,7 +95,7 @@
   <text class="t" x="48" y="360">参数即时生效</text>
   <text class="t" x="48" y="380">写回 config.json</text>
   <text class="t" x="48" y="406" fill="#7fb3e8">Main.cpp · 装配</text>
-  <text class="t" x="48" y="430">Game / Menu / Overlay / Features</text>
+  <text class="t" x="48" y="430">Game / Menu / Overlay / Features / MemoryEngine</text>
 
   <!-- 连线 -->
   <path class="flow" d="M262 165 L300 165"/>
