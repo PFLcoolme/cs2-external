@@ -6,7 +6,9 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QCursor>
+#include <QDesktopServices>
 #include <QDoubleSpinBox>
+#include <QUrl>
 #include <QEasingCurve>
 #include <QEvent>
 #include <QFile>
@@ -15,6 +17,8 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QGuiApplication>
+#include <QGraphicsOpacityEffect>
+#include <QIcon>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -25,6 +29,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPropertyAnimation>
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QRegion>
@@ -65,9 +70,8 @@ namespace {
 
 // 玻璃底板的不透明度（0-255）：越低背后画面透出越明显，深色文字的对比度也越低。
 // 188 让面板接近雾面白玻璃：背景仍有变化感，但穿透的细节已经淡到不干扰阅读。
-// 深色底板需要更高的不透明度：浅色文字压在半透明黑上对比度天然低，
-// 235 让背后画面只剩一层很淡的流动感，文字保持清晰。
-constexpr int kGlassAlpha = 235;
+// 浅薄荷玻璃底板：比导航选中态更亮，保留背后画面的轻微流动感。
+constexpr int kGlassAlpha = 246;
 
 // 面板视觉：无边框半透明玻璃底板（paintEvent 绘制）+ 极简控件。
 // 浅色玻璃：底板用近白，文字与线条走深灰；只有描边和阴影压一点灰度，不用彩色强调。
@@ -76,30 +80,30 @@ constexpr int kGlassAlpha = 235;
 const char* kStyle = R"QSS(
 QWidget {
     background: transparent;
-    color: #E7E9EC;
+    color: #203027;
     font-family: "Noto Sans CJK SC", "Source Han Sans SC", "DejaVu Sans", sans-serif;
     font-size: 12px;
 }
 QLabel#brand {
-    color: #FFFFFF;
+    color: #183322;
     font-family: "DejaVu Sans Mono", monospace;
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: 3px;
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 2px;
 }
-QLabel#brandSub { color: #7C828B; font-size: 10px; }
-QLabel#pageTitle { color: #FFFFFF; font-size: 19px; font-weight: 700; }
-QLabel#pageSub { color: #7C828B; font-size: 10px; }
-QLabel#rowTitle { color: #EFF1F4; font-size: 13px; font-weight: 600; }
-QLabel#rowSub { color: #757B84; font-size: 9.5px; }
-QLabel#field { color: #AEB4BC; font-size: 11px; }
+QLabel#brandSub { color: #8E978D; font-size: 10px; }
+QLabel#pageTitle { color: #183322; font-size: 21px; font-weight: 800; }
+QLabel#pageSub { color: #567061; font-size: 10px; }
+QLabel#rowTitle { color: #213A2A; font-size: 13px; font-weight: 700; }
+QLabel#rowSub { color: #5C7766; font-size: 9.5px; }
+QLabel#field { color: #42604E; font-size: 11px; }
 QLabel#status {
-    color: #6E747D;
+    color: #3F6D4E;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 10px;
 }
 QLabel#stats {
-    color: #6E747D;
+    color: #2F7545;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 10px;
 }
@@ -111,31 +115,31 @@ QLabel#diag {
 QLabel#hint { color: #6E747D; font-size: 10px; }
 QLabel#warn { color: #F0A6A6; font-size: 10px; font-weight: 700; }
 QWidget#card {
-    background: rgba(255, 255, 255, 12);
-    border: 1px solid rgba(255, 255, 255, 10);
-    border-radius: 10px;
-}
-QWidget#card:hover { background: rgba(255, 255, 255, 20); }
-QWidget#navColumn {
-    background: rgba(255, 255, 255, 6);
-    border: 1px solid rgba(255, 255, 255, 10);
+    background: rgba(255, 255, 255, 92);
+    border: 1px solid rgba(55, 105, 70, 32);
     border-radius: 12px;
+}
+QWidget#card:hover { background: rgba(193, 228, 174, 145); border-color: rgba(55, 105, 70, 74); }
+QWidget#navColumn {
+    background: rgba(205, 231, 195, 218);
+    border: 1px solid rgba(55, 105, 70, 48);
+    border-radius: 16px;
 }
 QFrame#rule { background: rgba(255, 255, 255, 22); border: none; min-height: 1px; max-height: 1px; }
 QLineEdit#search {
-    background: rgba(255, 255, 255, 10);
-    border: 1px solid rgba(255, 255, 255, 12);
+    background: rgba(255, 255, 255, 150);
+    border: 1px solid rgba(55, 105, 70, 58);
     border-radius: 8px;
     padding: 6px 9px;
-    color: #E7E9EC;
+    color: #23432E;
     font-size: 11px;
 }
 QLineEdit#search:focus { border-color: rgba(255, 255, 255, 40); }
 /* 开关的轨道与滑块由 ToggleSwitch 自绘（iOS 形制），这里只保留文字色基线。 */
-QCheckBox { color: #E7E9EC; }
+QCheckBox { color: #23432E; }
 QSpinBox, QDoubleSpinBox, QComboBox {
-    background: rgba(255, 255, 255, 10);
-    border: 1px solid rgba(255, 255, 255, 14);
+    background: rgba(255, 255, 255, 170);
+    border: 1px solid rgba(55, 105, 70, 58);
     border-radius: 7px;
     padding: 3px 7px;
     min-height: 16px;
@@ -146,12 +150,12 @@ QSpinBox, QDoubleSpinBox, QComboBox {
     selection-color: #14171A;
 }
 QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover {
-    background: rgba(255, 255, 255, 18);
-    border-color: rgba(255, 255, 255, 30);
+    background: rgba(255, 255, 255, 215);
+    border-color: rgba(55, 105, 70, 92);
 }
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
-    border-color: rgba(255, 255, 255, 55);
-    background: rgba(255, 255, 255, 16);
+    border-color: rgba(47, 117, 69, 150);
+    background: rgba(255, 255, 255, 230);
 }
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
@@ -161,47 +165,57 @@ QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
 }
 QComboBox::drop-down { border: none; width: 16px; }
 QComboBox QAbstractItemView {
-    background: #1B1E22;
-    border: 1px solid rgba(255, 255, 255, 26);
+    background: #F7FCF4;
+    border: 1px solid #6F9E70;
     border-radius: 7px;
     padding: 4px;
     outline: none;
-    color: #E7E9EC;
-    selection-background-color: rgba(255, 255, 255, 210);
-    selection-color: #14171A;
+    color: #173521;
+    font-size: 12px;
+    selection-background-color: #B9D9AA;
+    selection-color: #173521;
+}
+QComboBox QAbstractItemView::item {
+    min-height: 28px;
+    padding: 5px 8px;
+}
+QComboBox QAbstractItemView::item:hover {
+    background: #DCEFD4;
+    color: #173521;
 }
 QPushButton#apply {
-    background: rgba(255, 255, 255, 16);
-    color: #FFFFFF;
-    border: 1px solid rgba(255, 255, 255, 26);
+    background: #2F7545;
+    color: #F5FBEF;
+    border: 1px solid #245D36;
     border-radius: 8px;
     padding: 6px 12px;
     font-size: 11px;
 }
-QPushButton#apply:hover { background: rgba(255, 255, 255, 235); color: #14171A; border-color: transparent; }
-QPushButton#apply:pressed { background: rgba(255, 255, 255, 160); color: #14171A; }
+QPushButton#apply:hover { background: #3D8955; color: #FFFFFF; border-color: #2F7545; }
+QPushButton#apply:pressed { background: #245D36; color: #FFFFFF; }
 QPushButton#restore {
-    background: transparent;
-    color: #9AA0A8;
-    border: 1px solid rgba(255, 255, 255, 16);
+    background: rgba(255, 255, 255, 128);
+    color: #285238;
+    border: 1px solid rgba(55, 105, 70, 68);
     border-radius: 8px;
     padding: 8px 10px;
     font-size: 11px;
 }
-QPushButton#restore:hover { background: rgba(255, 255, 255, 14); color: #FFFFFF; border-color: rgba(255, 255, 255, 40); }
-QPushButton#restore:pressed { background: rgba(255, 255, 255, 40); color: #FFFFFF; }
+QPushButton#restore:hover { background: #B9D9AA; color: #173521; border-color: #6F9E70; }
+QPushButton#restore:pressed { background: #93BB88; color: #173521; }
 QPushButton#close {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 16);
+    background: rgba(255, 255, 255, 128);
+    border: 1px solid rgba(55, 105, 70, 68);
     border-radius: 8px;
-    color: #9AA0A8;
+    color: #285238;
     font-size: 11px;
     padding: 8px 10px;
 }
-QPushButton#close:hover { background: rgba(255, 255, 255, 14); color: #FFFFFF; }
+QPushButton#close:hover { background: #B9D9AA; color: #173521; border-color: #6F9E70; }
+QPushButton#close:pressed { background: #93BB88; color: #173521; }
 QPlainTextEdit#log {
-    background: rgba(0, 0, 0, 60);
-    border: 1px solid rgba(255, 255, 255, 10);
+    background: rgba(34, 66, 43, 34);
+    border: 1px solid rgba(55, 105, 70, 42);
     border-radius: 8px;
     color: #9AA1AA;
     font-family: "DejaVu Sans Mono", monospace;
@@ -223,6 +237,57 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 )QSS";
 
+QIcon navIcon(int index, const QColor& color) {
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(color, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    const QRectF box(4.0, 4.0, 16.0, 16.0);
+    switch (index) {
+        case 0: {
+            painter.drawLine(4, 8, 4, 4); painter.drawLine(4, 4, 8, 4);
+            painter.drawLine(16, 4, 20, 4); painter.drawLine(20, 4, 20, 8);
+            painter.drawLine(4, 16, 4, 20); painter.drawLine(4, 20, 8, 20);
+            painter.drawLine(16, 20, 20, 20); painter.drawLine(20, 20, 20, 16);
+            painter.drawRect(QRectF(8.5, 8.5, 7, 7));
+            break;
+        }
+        case 1:
+            painter.drawEllipse(QRectF(8, 8, 8, 8));
+            painter.drawLine(12, 2, 12, 7); painter.drawLine(12, 17, 12, 22);
+            painter.drawLine(2, 12, 7, 12); painter.drawLine(17, 12, 22, 12);
+            break;
+        case 2:
+            painter.drawLine(13, 2, 7, 13); painter.drawLine(7, 13, 12, 13);
+            painter.drawLine(12, 13, 10, 22); painter.drawLine(10, 22, 17, 10);
+            painter.drawLine(17, 10, 12, 10); painter.drawLine(12, 10, 13, 2);
+            break;
+        case 3:
+            painter.drawRoundedRect(box, 2, 2);
+            painter.drawLine(8, 2, 8, 5); painter.drawLine(12, 2, 12, 5); painter.drawLine(16, 2, 16, 5);
+            painter.drawLine(8, 19, 8, 22); painter.drawLine(12, 19, 12, 22); painter.drawLine(16, 19, 16, 22);
+            painter.drawLine(2, 8, 5, 8); painter.drawLine(2, 12, 5, 12); painter.drawLine(2, 16, 5, 16);
+            painter.drawLine(19, 8, 22, 8); painter.drawLine(19, 12, 22, 12); painter.drawLine(19, 16, 22, 16);
+            break;
+        case 4:
+            painter.drawLine(5, 6, 19, 6); painter.drawLine(5, 12, 19, 12); painter.drawLine(5, 18, 19, 18);
+            painter.drawEllipse(QPointF(3, 6), 0.7, 0.7); painter.drawEllipse(QPointF(3, 12), 0.7, 0.7); painter.drawEllipse(QPointF(3, 18), 0.7, 0.7);
+            break;
+        default:
+            painter.drawEllipse(QPointF(12, 12), 7, 7);
+            painter.drawEllipse(QPointF(12, 12), 3, 3);
+            for (int i = 0; i < 8; ++i) {
+                const qreal angle = i * 3.141592653589793 / 4.0;
+                painter.drawLine(QPointF(12 + 8 * std::cos(angle), 12 + 8 * std::sin(angle)),
+                                 QPointF(12 + 10 * std::cos(angle), 12 + 10 * std::sin(angle)));
+            }
+            break;
+    }
+    return QIcon(pixmap);
+}
+
 // 侧栏按钮样式不走全局样式表：ID 选择器配 :checked 时 Qt 会回退到原生绘制，
 // 选中态直接变成系统高亮的蓝色。改成挂在按钮自身的样式表，优先级最高。
 const char* kNavStyle = R"QSS(
@@ -230,17 +295,17 @@ QPushButton {
     background: transparent;
     border: 1px solid transparent;
     border-radius: 8px;
-    color: #9AA0A8;
+    color: #3F634B;
     font-size: 12px;
     padding: 0 10px;
     text-align: left;
 }
-QPushButton:hover { background: rgba(255, 255, 255, 14); color: #FFFFFF; }
+QPushButton:hover { background: rgba(255, 255, 255, 145); color: #214A2D; }
 QPushButton:checked {
-    background: rgba(255, 255, 255, 222);
-    color: #14171A;
-    font-weight: 700;
-    border-color: transparent;
+    background: rgba(193, 228, 174, 230);
+    color: #162017;
+    font-weight: 800;
+    border-color: rgba(222, 255, 201, 180);
 }
 )QSS";
 
@@ -323,21 +388,20 @@ protected:
         const qreal radius = kTrackHeight / 2.0;
         const QRectF track(0.0, (height() - kTrackHeight) / 2.0, kTrackWidth, kTrackHeight);
         painter.setPen(Qt::NoPen);
-        // 深色底板：关闭是低对比灰轨道，开启是近白轨道，靠明度差表达状态。
-        painter.setBrush(blend(QColor(255, 255, 255, 36), QColor(240, 242, 245, 245), knob_));
+        // 浅色面板上关闭态保持柔和灰绿，开启态切换为清晰的深绿色轨道。
+        painter.setBrush(blend(QColor(118, 145, 123, 110), QColor(35, 99, 56, 245), knob_));
         painter.drawRoundedRect(track, radius, radius);
 
-        // 滑块随状态反转：关闭时白点压在暗轨道上，开启时暗点压在近白轨道上，
-        // 两种状态都保持对比，不会出现「白点贴白轨」看不清。
+        // 开启态使用浅色滑块，和深绿色轨道形成明确对比。
         const qreal knobSize = kTrackHeight - 4.0;
         const qreal knobX = track.left() + 2.0 + knob_ * (kTrackWidth - 4.0 - knobSize);
-        painter.setBrush(blend(QColor(245, 247, 250), QColor(24, 27, 31), knob_));
+        painter.setBrush(blend(QColor(244, 249, 240), QColor(230, 246, 224), knob_));
         painter.drawEllipse(QRectF(knobX, track.top() + 2.0, knobSize, knobSize));
 
         const QFontMetrics metrics(font());
         const int textLeft = kTrackWidth + kGap;
         const QRect textRect(textLeft, 0, std::max(0, width() - textLeft), height());
-        painter.setPen(isEnabled() ? QColor(231, 233, 236) : QColor(120, 126, 134));
+        painter.setPen(isEnabled() ? QColor(35, 67, 45) : QColor(107, 125, 111));
         painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
                          metrics.elidedText(text(), Qt::ElideRight, textRect.width()));
     }
@@ -465,10 +529,11 @@ public:
         setFocusPolicy(Qt::StrongFocus);
         setFixedWidth(96);
         setStyleSheet(
-            "QPushButton{background:rgba(255,255,255,10);border:1px solid rgba(255,255,255,14);"
-            "border-radius:7px;color:#E7E9EC;font-size:11px;padding:3px 6px;}"
-            "QPushButton:hover{background:rgba(255,255,255,20);border-color:rgba(255,255,255,34);}"
-            "QPushButton:focus{border-color:rgba(255,255,255,70);}");
+            "QPushButton{background:#F7FCF4;border:1px solid #6F9E70;"
+            "border-radius:7px;color:#173521;font-size:11px;font-weight:700;padding:4px 8px;}"
+            "QPushButton:hover{background:#DCEFD4;border-color:#3D8955;color:#12301D;}"
+            "QPushButton:pressed{background:#B9D9AA;color:#12301D;}"
+            "QPushButton:focus{border:2px solid #2F7545;background:#E8F4E3;}");
         setText(describeKey(code_));
         connect(this, &QPushButton::clicked, this, [this] {
             // 延后一点再进入录制：本次点击的左键释放还在路上，
@@ -477,6 +542,9 @@ public:
                 if (!isVisible()) return;
                 capturing_ = true;
                 setText("按按键…");
+                setStyleSheet(
+                    "QPushButton{background:#F4C46A;border:2px solid #B46A1F;"
+                    "border-radius:7px;color:#4A2A0B;font-size:11px;font-weight:800;padding:3px 7px;}" );
             });
         });
     }
@@ -491,6 +559,12 @@ public:
         const bool changed = code != code_;
         code_ = code;
         capturing_ = false;
+        setStyleSheet(
+            "QPushButton{background:#F7FCF4;border:1px solid #6F9E70;"
+            "border-radius:7px;color:#173521;font-size:11px;font-weight:700;padding:4px 8px;}"
+            "QPushButton:hover{background:#DCEFD4;border-color:#3D8955;color:#12301D;}"
+            "QPushButton:pressed{background:#B9D9AA;color:#12301D;}"
+            "QPushButton:focus{border:2px solid #2F7545;background:#E8F4E3;}");
         setText(describeKey(code_));
         if (changed && onChanged) onChanged();
     }
@@ -551,8 +625,8 @@ Menu::Menu(AppState& state, Game& game, std::string configPath)
     // - 无合成器：透明区会被贴成未初始化像素，必须退回不透明 + 快照自模糊。
     translucent_ = compositorRunning();
     if (translucent_) setAttribute(Qt::WA_TranslucentBackground, true);
-    // 侧栏 196px + 右侧内容区：与参考图的双栏比例接近，卡片行有足够宽度。
-    setFixedWidth(720);
+    // 宽屏双栏工作区：侧栏保持紧凑，右侧给参数卡片与日志更充足的呼吸感。
+    setFixedSize(860, 680);
     setStyleSheet(kStyle);
 
     // 参数防抖：改动后静默 400 ms 才落盘，拖动 spinbox 时不会疯狂写文件。
@@ -685,16 +759,18 @@ void Menu::paintEvent(QPaintEvent* /*event*/) {
 
     // 玻璃底层：有合成器时只铺一层半透明白，背后画面由合成器实时合成后透出；
     // 无合成器时才退回静态快照。
+    static const QColor panelColors[] = {QColor(220, 239, 212), QColor(212, 229, 211), QColor(219, 232, 242), QColor(241, 224, 191)};
+    const QColor panelColor = panelColors[std::clamp(themeIndex_, 0, 3)];
     if (translucent_) {
-        painter.fillRect(rect(), QColor(16, 18, 21, kGlassAlpha));
+        painter.fillRect(rect(), QColor(panelColor.red(), panelColor.green(), panelColor.blue(), kGlassAlpha));
     } else {
         if (backdropDirty_) rebuildBackdrop();
         if (!backdropBlurred_.isNull()) {
             painter.drawPixmap(rect(), backdropBlurred_);
             // 压一层深色玻璃：保证浅色文字可读，同时让背后画面只留一点变化感。
-            painter.fillRect(rect(), QColor(16, 18, 21, kGlassAlpha));
+            painter.fillRect(rect(), QColor(panelColor.red(), panelColor.green(), panelColor.blue(), kGlassAlpha));
         } else {
-            painter.fillRect(rect(), QColor(16, 18, 21, 255));
+            painter.fillRect(rect(), QColor(panelColor.red(), panelColor.green(), panelColor.blue(), 255));
         }
     }
 
@@ -834,9 +910,10 @@ QWidget* Menu::makeRow(QCheckBox* toggle, const QString& name, const QString& hi
         entry->setCursor(Qt::PointingHandCursor);
         entry->setFocusPolicy(Qt::NoFocus);
         entry->setStyleSheet(
-            "QPushButton{background:rgba(255,255,255,10);border:1px solid rgba(255,255,255,12);"
-            "border-radius:6px;color:#AEB4BC;font-size:10px;padding:3px 8px;}"
-            "QPushButton:hover{background:rgba(255,255,255,22);color:#FFFFFF;}");
+            "QPushButton{background:rgba(255,255,255,165);border:1px solid rgba(55,105,70,58);"
+            "border-radius:6px;color:#285238;font-size:10px;font-weight:600;padding:3px 8px;}"
+            "QPushButton:hover{background:#B9D9AA;color:#173521;border-color:#6F9E70;}"
+            "QPushButton:pressed{background:#93BB88;color:#173521;}");
         layout->addWidget(entry, 0, Qt::AlignVCenter);
     }
     layout->addWidget(toggle, 0, Qt::AlignVCenter);
@@ -849,7 +926,7 @@ QWidget* Menu::makeRow(QCheckBox* toggle, const QString& name, const QString& hi
     panel->setObjectName("paramPanel");
     panel->setAttribute(Qt::WA_StyledBackground, true);
     panel->setStyleSheet(
-        "QWidget#paramPanel{background:rgba(0,0,0,70);border:1px solid rgba(255,255,255,8);"
+        "QWidget#paramPanel{background:rgba(232,244,227,235);border:1px solid rgba(55,105,70,62);"
         "border-radius:9px;}");
     auto* panelLayout = new QVBoxLayout(panel);
     panelLayout->setContentsMargins(14, 8, 10, 8);
@@ -890,7 +967,7 @@ void Menu::buildUi() {
 
     auto* navColumn = new QWidget(this);
     navColumn->setObjectName("navColumn");
-    navColumn->setFixedWidth(196);
+    navColumn->setFixedWidth(218);
     auto* navLayout = new QVBoxLayout(navColumn);
     navLayout->setContentsMargins(16, 18, 14, 16);
     navLayout->setSpacing(6);
@@ -918,11 +995,16 @@ void Menu::buildUi() {
     contentLayout->setContentsMargins(18, 18, 18, 16);
     contentLayout->setSpacing(10);
 
-    // 侧栏图标走几何符号，避免依赖 emoji 字体（叠加层与面板都只用等宽/无衬线）。
-    const QStringList tabNames{"◈  玩家透视", "◎  瞄准", "⌖  扳机", "▤  内存", "≡  日志"};
+    // 侧栏使用统一的线性矢量图标，不依赖 emoji 字体；图标与按钮状态同步变色。
+    const QStringList tabNames{"玩家透视", "瞄准", "扳机", "内存", "日志", "设置"};
     for (int i = 0; i < tabNames.size(); ++i) {
         auto* tab = new QPushButton(tabNames.at(i), navColumn);
         tab->setObjectName("nav");
+        QIcon icon;
+        icon.addPixmap(navIcon(i, QColor("#3F634B")).pixmap(24, 24), QIcon::Normal, QIcon::Off);
+        icon.addPixmap(navIcon(i, QColor("#173521")).pixmap(24, 24), QIcon::Normal, QIcon::On);
+        tab->setIcon(icon);
+        tab->setIconSize(QSize(20, 20));
         tab->setStyleSheet(kNavStyle);
         tab->setCheckable(true);
         tab->setAutoExclusive(true);
@@ -1430,6 +1512,56 @@ void Menu::buildUi() {
     logLayout->addWidget(logView_);
     logLayout->addStretch(1);
 
+    // ---- 页六：设置 ----
+    QVBoxLayout* settingsLayout = addPage(QStringLiteral("Settings"));
+    auto* themeTitle = new QLabel("主题外观", this);
+    themeTitle->setObjectName("rowTitle");
+    settingsLayout->addWidget(themeTitle);
+    auto* themeHint = new QLabel("只更换颜色，不改变布局与功能。切换后立即生效。", this);
+    themeHint->setObjectName("rowSub");
+    settingsLayout->addWidget(themeHint);
+    auto* themeCombo = new QComboBox(this);
+    themeCombo->addItems({"薄荷绿 · 当前", "森林绿 · 深邃", "雾蓝灰 · 冷静", "琥珀沙 · 暖色"});
+    themeCombo->setCurrentIndex(themeIndex_);
+    themeCombo->setFixedWidth(210);
+    settingsLayout->addWidget(paramRow("配色主题", themeCombo, this));
+    connect(themeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, &Menu::applyTheme);
+
+    auto addInfo = [settingsLayout, this](const QString& label, const QString& value) {
+        auto* row = new QWidget(this);
+        row->setObjectName("card");
+        auto* layout = new QHBoxLayout(row);
+        layout->setContentsMargins(14, 10, 14, 10);
+        auto* name = new QLabel(label, row);
+        name->setObjectName("field");
+        auto* valueLabel = new QLabel(value, row);
+        valueLabel->setObjectName("rowTitle");
+        valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        layout->addWidget(name);
+        layout->addWidget(valueLabel, 1, Qt::AlignRight);
+        settingsLayout->addWidget(row);
+    };
+    addInfo("版本", "cs2_lite · 开发构建");
+    addInfo("界面框架", "Qt 6 Widgets");
+    addInfo("编译标准", "C++20 · CMake ≥ 3.21");
+    addInfo("平台", "Linux · X11");
+    addInfo("输入后端", "UInput / XTest fallback");
+    addInfo("作者", "белый парус");
+    addInfo("许可", "GPL-3.0-only");
+    auto* repository = new QPushButton("开源仓库  ·  github.com/PFLcoolme/cs2-external", this);
+    repository->setObjectName("restore");
+    repository->setCursor(Qt::PointingHandCursor);
+    repository->setToolTip("打开 GitHub 开源仓库");
+    connect(repository, &QPushButton::clicked, this, [] {
+        QDesktopServices::openUrl(QUrl("https://github.com/PFLcoolme/cs2-external"));
+    });
+    settingsLayout->addWidget(repository);
+    auto* settingsNote = new QLabel("本面板不注入进程。直接内存功能默认关闭，配置与偏移文件均支持热重载。", this);
+    settingsNote->setObjectName("hint");
+    settingsNote->setWordWrap(true);
+    settingsLayout->addWidget(settingsNote);
+    settingsLayout->addStretch(1);
+
     contentLayout->addWidget(rule(this));
 
     auto* hint = new QLabel(this);
@@ -1476,19 +1608,48 @@ void Menu::buildUi() {
 void Menu::setPage(int index) {
     if (!pages_) return;
     pages_->setCurrentIndex(index);
+    if (QWidget* page = pages_->currentWidget()) {
+        auto* effect = new QGraphicsOpacityEffect(page);
+        page->setGraphicsEffect(effect);
+        auto* fade = new QPropertyAnimation(effect, "opacity", page);
+        fade->setDuration(180);
+        fade->setStartValue(0.35);
+        fade->setEndValue(1.0);
+        fade->setEasingCurve(QEasingCurve::OutCubic);
+        connect(fade, &QPropertyAnimation::finished, page, [page] { page->setGraphicsEffect(nullptr); });
+        fade->start(QAbstractAnimation::DeleteWhenStopped);
+    }
     // 页头与侧栏选中态一起走，避免两处状态分叉。
-    if (index >= 0 && index < 5 && tabs_[index]) {
+    if (index >= 0 && index < 6 && tabs_[index]) {
         tabs_[index]->setChecked(true);
     }
-    static const char* kTitles[] = {"玩家透视", "瞄准", "扳机", "内存", "日志"};
+    static const char* kTitles[] = {"玩家透视", "瞄准", "扳机", "内存", "日志", "设置"};
     static const char* kSubs[] = {"ESP 模块与绘制", "自瞄与追踪", "扳机与静默",
-                                  "直接内存写入", "诊断与快捷键"};
-    if (pageTitle_ && index >= 0 && index < 5) {
+                                  "直接内存写入", "诊断与快捷键", "外观与项目资料"};
+    if (pageTitle_ && index >= 0 && index < 6) {
         pageTitle_->setText(QString::fromUtf8(kTitles[index]));
         pageSub_->setText(QString::fromUtf8(kSubs[index]));
     }
     // 切页后搜索词沿用：用户常常在多个页里找同一类功能。
     if (search_ && !search_->text().isEmpty()) filterRows(search_->text());
+}
+
+void Menu::applyTheme(int index) {
+    themeIndex_ = std::clamp(index, 0, 3);
+    static const QColor backgrounds[] = {QColor("#DCEFD4"), QColor("#D7E5D3"), QColor("#DCE8F0"), QColor("#F3E3C4")};
+    static const QColor sidebars[] = {QColor("#CDE7C3"), QColor("#C5DDC3"), QColor("#C8D9E8"), QColor("#EBD3A7")};
+    static const QColor accents[] = {QColor("#2F7545"), QColor("#28633A"), QColor("#356A8A"), QColor("#9A6521")};
+    const QColor background = backgrounds[themeIndex_];
+    const QColor sidebar = sidebars[themeIndex_];
+    const QColor accent = accents[themeIndex_];
+    setStyleSheet(QString(kStyle)
+                      .replace("#D7EAD0", background.lighter(105).name())
+                      .replace("#2F7545", accent.name())
+                      .replace("#3D8955", accent.lighter(115).name())
+                      .replace("#245D36", accent.darker(115).name()));
+    setProperty("themeBackground", background);
+    setProperty("themeSidebar", sidebar);
+    update();
 }
 
 void Menu::filterRows(const QString& keyword) {

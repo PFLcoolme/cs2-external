@@ -1,4 +1,5 @@
 #pragma once
+#include <QColor>
 #include <QDateTime>
 #include <QImage>
 #include <QPixmap>
@@ -170,7 +171,7 @@ private:
     QPlainTextEdit* logView_{nullptr};
 
     // 左侧类别导航 + 右侧分页：透视 / 自瞄 / 扳机 / 内存 / 日志。
-    QPushButton* tabs_[5]{};
+    QPushButton* tabs_[6]{};
     QStackedWidget* pages_{nullptr};
     // 页头：标题 + 副标题随分类切换，右侧是落盘按钮。
     QLabel* pageTitle_{nullptr};
@@ -179,6 +180,7 @@ private:
     // 按名称过滤当前页的卡片行，空串恢复全部。
     void filterRows(const QString& keyword);
     void setPage(int index);
+    void applyTheme(int index);
 
     // 有合成器时走 ARGB 半透明窗口，背景由合成器实时模糊，能跟随画面变化；
     // 没有合成器才退回「全屏快照 + 自模糊」，那套是静态的，只为兜底。
@@ -199,6 +201,7 @@ private:
     // 提示信息需要压过这个轮询，否则用户根本看不到「已保存」或偏移缺失警告。
     QDateTime messageUntil_;
     bool placed_{false};
+    int themeIndex_{0};
 };
 
 }  // namespace wv
